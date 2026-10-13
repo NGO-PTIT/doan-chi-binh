@@ -9,6 +9,7 @@ import { BLACK, RED, applyMove, initialBoard, legalMoves, notation, other } from
 const root=path.dirname(fileURLToPath(import.meta.url))
 const dist=path.join(root,'dist')
 const port=Number(process.env.PORT)||8080
+const wolfTurnMs=Math.max(100,Number(process.env.WOLF_TURN_MS)||60000)
 const rooms=new Map()
 const wolfRooms=new Map()
 const clients=new WeakMap()
@@ -42,6 +43,7 @@ wss.on('connection',socket=>{
     if (data.type==='wolf_create') return createWolfRoom(socket,data.name)
     if (data.type==='wolf_join') return joinWolfRoom(socket,String(data.code||'').toUpperCase().trim(),data.name)
     if (data.type==='wolf_start') return startWolfGame(socket)
+    if (data.type==='wolf_end') return endWolfRoom(socket)
     if (data.type==='wolf_action') return wolfAction(socket,data.target)
     if (data.type==='wolf_vote') return wolfVote(socket,data.target)
     const meta=clients.get(socket), room=meta&&rooms.get(meta.code)
@@ -142,7 +144,7 @@ function leaveWolfRoom(socket,meta) {
   if (!room||!player) return
   player.connected=false;player.socket=null
   if (room.status==='lobby') room.players=room.players.filter(p=>p.id!==player.id)
-  if (!room.players.some(p=>p.connected)) { wolfRooms.delete(room.code);return }
+  if (!room.players.some(p=>p.connected)) { clearWolfTimer(room);wolfRooms.delete(room.code);return }
   if (player.host) {player.host=false;const next=room.players.find(p=>p.connected);if(next)next.host=true}
   broadcastWolf(room)
 }
@@ -164,13 +166,26 @@ function startWolfGame(socket) {
   room.players.forEach((p,i)=>{p.role=roles[i];p.alive=true;p.vote=null;p.privateMessage='';p.host=Boolean(p.host)})
   room.status='playing';room.round=1;room.winner=null;room.log=[];beginWolfNight(room)
 }
+function endWolfRoom(socket) {
+  const meta=clients.get(socket),room=meta&&wolfRooms.get(meta.code),player=room?.players.find(p=>p.id===meta.id)
+  if (!room||!player?.host) return send(socket,{type:'wolf_error',message:'Chỉ chủ phòng mới có thể kết thúc phòng'})
+  clearWolfTimer(room)
+  for(const member of room.players)if(member.socket?.readyState===WebSocket.OPEN){
+    send(member.socket,{type:'wolf_closed',message:'Chủ phòng đã kết thúc phòng chơi.'})
+    clients.delete(member.socket)
+    setTimeout(()=>member.socket?.close(),50)
+  }
+  wolfRooms.delete(room.code)
+}
 function beginWolfNight(room) {
+  clearWolfTimer(room)
   room.phase='night';room.actions=new Map();room.guardTarget=null;room.wolfTarget=null
   room.players.forEach(p=>{p.vote=null;p.privateMessage=''})
   advanceWolfStep(room,-1)
 }
-function activeForStep(room,role) { return room.players.filter(p=>p.alive&&p.connected&&p.role===role) }
+function activeForStep(room,role) { return room.players.filter(p=>p.alive&&p.role===role) }
 function advanceWolfStep(room,index) {
+  clearWolfTimer(room)
   for(let i=index+1;i<WOLF_STEPS.length;i++){
     const step=WOLF_STEPS[i],actors=activeForStep(room,step)
     if (!actors.length) continue
@@ -179,7 +194,7 @@ function advanceWolfStep(room,index) {
       if(room.witchSaveUsed&&room.witchPoisonUsed)continue
       witch.privateMessage=room.wolfTarget?`Sói đã chọn ${room.players.find(p=>p.id===room.wolfTarget)?.name}. Bạn có muốn dùng thuốc?`:'Đêm nay Sói không chọn được nạn nhân.'
     }
-    room.step=step;room.actions=new Map();room.narration=WOLF_NARRATION[step];broadcastWolf(room);return
+    room.step=step;room.actions=new Map();room.narration=WOLF_NARRATION[step];scheduleWolfTimer(room);broadcastWolf(room);return
   }
   resolveWolfNight(room)
 }
@@ -208,7 +223,25 @@ function wolfAction(socket,target) {
   }
   advanceWolfStep(room,WOLF_STEPS.indexOf(room.step))
 }
+function clearWolfTimer(room) {
+  if(room.stepTimer)clearTimeout(room.stepTimer)
+  room.stepTimer=null;room.deadline=null
+}
+function scheduleWolfTimer(room) {
+  room.deadline=Date.now()+wolfTurnMs
+  const expectedStep=room.step
+  room.stepTimer=setTimeout(()=>{
+    if(room.status!=='playing'||room.phase!=='night'||room.step!==expectedStep)return
+    if(expectedStep==='wolf'){
+      const counts={};for(const id of room.actions.values())counts[id]=(counts[id]||0)+1
+      room.wolfTarget=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0]||null
+    }
+    room.narration=room.actions.size?'Luna AI đã ghi nhận các lựa chọn hợp lệ và chuyển lượt.':'Đã hết 60 giây. Luna AI tự động bỏ qua lượt này.'
+    advanceWolfStep(room,WOLF_STEPS.indexOf(expectedStep))
+  },wolfTurnMs)
+}
 function resolveWolfNight(room) {
+  clearWolfTimer(room)
   const deaths=[]
   if(room.wolfTarget&&room.wolfTarget!==room.guardTarget)deaths.push(room.wolfTarget)
   const poison=room.actions.get('poison');if(poison&&!deaths.includes(poison))deaths.push(poison)
@@ -224,7 +257,7 @@ function wolfVote(socket,target) {
   if (!room||room.status!=='playing'||room.phase!=='day'||!player?.alive) return
   if(!room.players.some(p=>p.id===target&&p.alive)||target===player.id)return
   player.vote=target;room.actions.set(player.id,target)
-  if(room.actions.size<room.players.filter(p=>p.alive&&p.connected).length){broadcastWolf(room);return}
+  if(room.actions.size<room.players.filter(p=>p.alive).length){broadcastWolf(room);return}
   const counts={};for(const id of room.actions.values())counts[id]=(counts[id]||0)+1
   const ranked=Object.entries(counts).sort((a,b)=>b[1]-a[1]);let eliminated=null
   if(ranked[0]&&(!ranked[1]||ranked[0][1]>ranked[1][1]))eliminated=ranked[0][0]
@@ -237,12 +270,12 @@ function wolfVote(socket,target) {
 function checkWolfWinner(room) {
   const wolves=room.players.filter(p=>p.alive&&p.role==='wolf').length,others=room.players.filter(p=>p.alive&&p.role!=='wolf').length
   if(wolves>0&&wolves<others)return false
-  room.winner=wolves===0?'Dân làng':'Ma Sói';room.status='finished';room.phase='finished';room.step=null;room.narration=`Phe ${room.winner} đã chiến thắng!`;broadcastWolf(room);return true
+  clearWolfTimer(room);room.winner=wolves===0?'Dân làng':'Ma Sói';room.status='finished';room.phase='finished';room.step=null;room.narration=`Phe ${room.winner} đã chiến thắng!`;broadcastWolf(room);return true
 }
 function broadcastWolf(room) {
   for(const player of room.players)if(player.socket?.readyState===WebSocket.OPEN){
     const canAct=room.status==='playing'&&player.alive&&((room.phase==='night'&&player.role===room.step)||(room.phase==='day'&&!player.vote))
-    send(player.socket,{type:'wolf_state',code:room.code,status:room.status,phase:room.phase,round:room.round,step:room.step,winner:room.winner,narration:room.narration,log:room.log.slice(0,6),you:{id:player.id,name:player.name,role:room.status==='lobby'?null:player.role,alive:player.alive,host:player.host,privateMessage:player.privateMessage,canAct,hasVoted:Boolean(player.vote),wolfIds:player.role==='wolf'?room.players.filter(p=>p.role==='wolf').map(p=>p.id):[],canSave:player.role==='witch'&&!room.witchSaveUsed&&Boolean(room.wolfTarget),canPoison:player.role==='witch'&&!room.witchPoisonUsed,wolfVictim:player.role==='witch'&&room.wolfTarget?room.players.find(p=>p.id===room.wolfTarget)?.name:null},players:room.players.map(p=>({id:p.id,name:p.name,alive:p.alive,connected:p.connected,host:p.host,voteDone:Boolean(p.vote)}))})
+    send(player.socket,{type:'wolf_state',code:room.code,status:room.status,phase:room.phase,round:room.round,step:room.step,deadline:room.deadline||null,votesSubmitted:room.players.filter(p=>p.alive&&p.vote).length,votesRequired:room.players.filter(p=>p.alive).length,winner:room.winner,narration:room.narration,log:room.log.slice(0,6),you:{id:player.id,name:player.name,role:room.status==='lobby'?null:player.role,alive:player.alive,host:player.host,privateMessage:player.privateMessage,canAct,hasVoted:Boolean(player.vote),wolfIds:player.role==='wolf'?room.players.filter(p=>p.role==='wolf').map(p=>p.id):[],canSave:player.role==='witch'&&!room.witchSaveUsed&&Boolean(room.wolfTarget),canPoison:player.role==='witch'&&!room.witchPoisonUsed,wolfVictim:player.role==='witch'&&room.wolfTarget?room.players.find(p=>p.id===room.wolfTarget)?.name:null},players:room.players.map(p=>({id:p.id,name:p.name,alive:p.alive,connected:p.connected,host:p.host,voteDone:Boolean(p.vote)}))})
   }
 }
 
