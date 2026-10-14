@@ -189,3 +189,260 @@ button:focus-visible{outline:2px solid #f0bf72;outline-offset:3px}
 /* Server-authoritative turn timer */
 .phase-status{margin-left:auto;min-width:142px;padding:11px 15px;border:1px solid #8190c244;border-radius:9px;background:#14192a;text-align:right}.phase-status b{display:block;color:#dbe1f7;font:600 25px/1 'Noto Serif';font-variant-numeric:tabular-nums}.phase-status small{display:block;margin-top:6px;color:#747e9e;font-size:9px;font-weight:700;letter-spacing:1.2px}.phase-status.urgent{border-color:#d66c7d88;background:#5d26313b;animation:timerUrgent 1s ease-in-out infinite}.phase-status.urgent b{color:#ff9dac}@keyframes timerUrgent{50%{box-shadow:0 0 22px #d94e6538}}
 @media(max-width:600px){.round-badge{flex-wrap:wrap}.phase-status{width:100%;display:flex;align-items:center;justify-content:space-between;text-align:left}.phase-status small{margin:0}.phase-status b{font-size:22px}}
+
+/* Caro Game Styles */
+.caro-shell .brand-mark.caro-mark{
+  background:#1d2420;
+  border-color:#5a9178;
+  color:#7bd4a9;
+  box-shadow:0 0 0 3px #1d2420,0 0 0 4px #4a7962,0 8px 25px #0009;
+  text-shadow:0 0 18px #6dbf9188
+}
+
+.caro-shell header h1{
+  background:linear-gradient(100deg,#b8f5d8,#5a9178);
+  background-clip:text;
+  color:transparent
+}
+
+.caro-layout{
+  grid-template-columns:270px minmax(480px,640px) 300px
+}
+
+.caro-board-wrap{
+  display:flex;
+  flex-direction:column;
+  align-items:center
+}
+
+.caro-board{
+  width:min(100%,600px);
+  aspect-ratio:1;
+  position:relative;
+  background:#f4e6d2;
+  border:10px solid #5a7968;
+  box-shadow:
+    inset 0 0 0 2px #a8d5be,inset 0 0 0 6px #3d5d4d,
+    0 0 0 2px #7ca58f,0 0 0 7px #1f2d26,
+    0 30px 65px #000c,0 4px 0 #0c0806;
+  padding:2%;
+  display:grid;
+  place-items:center
+}
+
+.caro-board::before{
+  content:'';
+  position:absolute;
+  inset:-7px;
+  border:1px solid #6bb89044;
+  pointer-events:none;
+  box-shadow:inset 0 0 26px #0009
+}
+
+.caro-grid{
+  width:100%;
+  height:100%;
+  display:grid;
+  grid-template-columns:repeat(15,1fr);
+  grid-template-rows:repeat(15,1fr);
+  gap:0;
+  background:
+    linear-gradient(90deg,#8b9e92 1px,transparent 1px),
+    linear-gradient(180deg,#8b9e92 1px,transparent 1px);
+  background-size:calc(100% / 15) calc(100% / 15);
+  position:relative
+}
+
+.caro-cell{
+  position:relative;
+  border:none;
+  background:transparent;
+  cursor:pointer;
+  padding:0;
+  display:grid;
+  place-items:center;
+  transition:background .15s
+}
+
+.caro-cell:not(:disabled):hover{
+  background:rgba(122,184,145,.15)
+}
+
+.caro-cell:disabled{
+  cursor:not-allowed
+}
+
+.caro-cell.last-move{
+  background:rgba(123,212,169,.22);
+  box-shadow:inset 0 0 0 2px rgba(123,212,169,.4)
+}
+
+.piece-x,.piece-o{
+  font-size:clamp(18px,3.5vw,32px);
+  font-weight:700;
+  display:grid;
+  place-items:center;
+  width:85%;
+  height:85%;
+  border-radius:50%;
+  transition:transform .2s,filter .2s;
+  animation:pieceIn .25s ease-out
+}
+
+@keyframes pieceIn{
+  from{transform:scale(.2);opacity:0}
+  to{transform:scale(1);opacity:1}
+}
+
+.piece-x{
+  color:#cf443c;
+  text-shadow:0 2px 4px #00000055,0 0 8px #cf443c88;
+  background:radial-gradient(circle at 35% 35%,#ff8b7e,#cf443c 60%,#8d201a);
+  border:2px solid #ffa89c;
+  box-shadow:inset 0 0 0 2px #a32018,inset 0 0 15px #00000044,0 4px 10px #00000088
+}
+
+.piece-o{
+  color:#5a9178;
+  text-shadow:0 2px 4px #00000055,0 0 8px #5a917888;
+  background:radial-gradient(circle at 35% 35%,#9fd4ba,#5a9178 60%,#3d6051);
+  border:2px solid #a8d5be;
+  box-shadow:inset 0 0 0 2px #3d5d4d,inset 0 0 15px #00000044,0 4px 10px #00000088
+}
+
+.caro-cell:not(:disabled):hover .piece-x,
+.caro-cell:not(:disabled):hover .piece-o{
+  transform:scale(1.08);
+  filter:brightness(1.12)
+}
+
+.caro-labels{
+  position:absolute;
+  inset:0;
+  pointer-events:none
+}
+
+.col-labels{
+  position:absolute;
+  top:-24px;
+  left:2%;
+  right:2%;
+  display:grid;
+  grid-template-columns:repeat(15,1fr);
+  text-align:center;
+  font:600 10px 'Be Vietnam Pro';
+  color:#7a9881;
+  letter-spacing:1px
+}
+
+.row-labels{
+  position:absolute;
+  left:-24px;
+  top:2%;
+  bottom:2%;
+  display:grid;
+  grid-template-rows:repeat(15,1fr);
+  place-items:center;
+  font:600 10px 'Be Vietnam Pro';
+  color:#7a9881
+}
+
+.caro-shell .turn-banner span.x-player{
+  background:#cf443c;
+  color:#cf443c
+}
+
+.caro-shell .turn-banner span.o-player{
+  background:#5a9178;
+  color:#5a9178
+}
+
+.caro-shell .avatar.caro-x{
+  background:radial-gradient(circle at 35% 25%,#ff9889,#cf443c 63%,#8d201a 100%);
+  color:#3d0d0a;
+  border-color:#ffa89c;
+  box-shadow:inset 0 0 0 3px #a32018,inset 0 0 0 5px #ffa89c,0 7px 20px #000a
+}
+
+.caro-shell .avatar.caro-o{
+  background:radial-gradient(circle at 35% 25%,#b8f0d4,#5a9178 63%,#3d6051);
+  color:#1a2b24;
+  border-color:#a8d5be;
+  box-shadow:inset 0 0 0 3px #3d5d4d,inset 0 0 0 5px #a8d5be,0 7px 20px #000a
+}
+
+.caro-moves .move-row span.x-move{
+  color:#f39185
+}
+
+.caro-moves .move-row span.o-move{
+  color:#7ebfa0
+}
+
+.x-dot{
+  background:#cf443c
+}
+
+.o-dot{
+  background:#5a9178
+}
+
+.caro-footer{
+  border-color:#4d6959;
+  color:#7a9881
+}
+
+.caro-footer span{
+  color:#6bb890;
+  font-size:20px
+}
+
+.caro-modal .x-win{
+  background:#cf443c;
+  color:#ffe8e6;
+  border-color:#8d201a
+}
+
+.caro-modal .o-win{
+  background:#5a9178;
+  color:#e6fff4;
+  border-color:#3d6051
+}
+
+.caro-modal .draw-win{
+  background:#7a7869;
+  color:#f4e6d2;
+  border-color:#4a4738
+}
+
+@media(max-width:760px){
+  .caro-board{
+    border-width:7px
+  }
+  
+  .piece-x,.piece-o{
+    font-size:clamp(14px,5.5vw,28px)
+  }
+  
+  .col-labels,.row-labels{
+    font-size:8px
+  }
+  
+  .col-labels{
+    top:-20px
+  }
+  
+  .row-labels{
+    left:-20px
+  }
+}
+
+@media(max-width:430px){
+  .caro-board{
+    border-width:5px
+  }
+  
+  .piece-x,.piece-o{
+    font-size:clamp(12px,6.5vw,24px)
+  }
+}

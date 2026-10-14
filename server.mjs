@@ -5,12 +5,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, WebSocket } from 'ws'
 import { BLACK, RED, applyMove, initialBoard, legalMoves, notation, other } from './src/engine.js'
+import { BOARD_SIZE, EMPTY, X_PLAYER, O_PLAYER, checkWinner, isBoardFull } from './src/caro.js'
 
 const root=path.dirname(fileURLToPath(import.meta.url))
 const dist=path.join(root,'dist')
 const port=Number(process.env.PORT)||8080
 const wolfTurnMs=Math.max(100,Number(process.env.WOLF_TURN_MS)||60000)
 const rooms=new Map()
+const caroRooms=new Map()
 const wolfRooms=new Map()
 const clients=new WeakMap()
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon'}
@@ -40,6 +42,10 @@ wss.on('connection',socket=>{
     try { data=JSON.parse(raw) } catch { return send(socket,{type:'error',message:'Dữ liệu không hợp lệ'}) }
     if (data.type==='create') return createRoom(socket)
     if (data.type==='join') return joinRoom(socket,String(data.code||'').toUpperCase().trim())
+    if (data.type==='caro_create') return createCaroRoom(socket)
+    if (data.type==='caro_join') return joinCaroRoom(socket,String(data.code||'').toUpperCase().trim())
+    if (data.type==='caro_move') return caroMove(socket,data.row,data.col)
+    if (data.type==='caro_reset') return resetCaroRoom(socket)
     if (data.type==='wolf_create') return createWolfRoom(socket,data.name)
     if (data.type==='wolf_join') return joinWolfRoom(socket,String(data.code||'').toUpperCase().trim(),data.name)
     if (data.type==='wolf_start') return startWolfGame(socket)
@@ -90,6 +96,7 @@ function leaveRoom(socket) {
   const meta=clients.get(socket)
   if (!meta) return
   if (meta.game==='wolf') return leaveWolfRoom(socket,meta)
+  if (meta.game==='caro') return leaveCaroRoom(socket,meta)
   const room=rooms.get(meta.code); clients.delete(socket)
   if (!room) return
   const opponent=meta.color===RED?room.black:room.red
@@ -102,6 +109,98 @@ function broadcast(room) {
     send(socket,{type:'state',code:room.code,color,status:room.red&&room.black?'playing':'waiting',board:room.board,turn:room.turn,history:room.history,winner:room.winner})
   }
 }
+
+// Caro Room Management
+function createCaroEmptyBoard() {
+  return Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(EMPTY))
+}
+
+function createCaroRoom(socket) {
+  leaveRoom(socket)
+  let code
+  do { code=randomCode() } while (rooms.has(code)||caroRooms.has(code)||wolfRooms.has(code))
+  const room={code,board:createCaroEmptyBoard(),currentPlayer:X_PLAYER,history:[],winner:null,xPlayer:socket,oPlayer:null}
+  caroRooms.set(code,room)
+  clients.set(socket,{game:'caro',code,player:X_PLAYER})
+  broadcastCaro(room)
+}
+
+function joinCaroRoom(socket,code) {
+  const room=caroRooms.get(code)
+  if (!room) return send(socket,{type:'caro_error',message:'Không tìm thấy phòng này'})
+  if (room.oPlayer) return send(socket,{type:'caro_error',message:'Phòng đã đủ hai người'})
+  leaveRoom(socket)
+  room.oPlayer=socket
+  clients.set(socket,{game:'caro',code,player:O_PLAYER})
+  broadcastCaro(room)
+}
+
+function caroMove(socket,row,col) {
+  const meta=clients.get(socket)
+  if (!meta||meta.game!=='caro') return
+  const room=caroRooms.get(meta.code)
+  if (!room||!room.xPlayer||!room.oPlayer||room.winner) return
+  if (meta.player!==room.currentPlayer) return
+  if (row<0||row>=BOARD_SIZE||col<0||col>=BOARD_SIZE||room.board[row][col]!==EMPTY) {
+    return send(socket,{type:'caro_error',message:'Nước đi không hợp lệ'})
+  }
+
+  const newBoard=room.board.map(r=>[...r])
+  newBoard[row][col]=room.currentPlayer
+  room.board=newBoard
+  room.history.push({row,col,player:room.currentPlayer})
+
+  if (checkWinner(room.board,row,col,room.currentPlayer)) {
+    room.winner=room.currentPlayer
+  } else if (isBoardFull(room.board)) {
+    room.winner='draw'
+  } else {
+    room.currentPlayer=room.currentPlayer===X_PLAYER?O_PLAYER:X_PLAYER
+  }
+
+  broadcastCaro(room)
+}
+
+function resetCaroRoom(socket) {
+  const meta=clients.get(socket)
+  if (!meta||meta.game!=='caro') return
+  const room=caroRooms.get(meta.code)
+  if (!room) return
+  room.board=createCaroEmptyBoard()
+  room.currentPlayer=X_PLAYER
+  room.history=[]
+  room.winner=null
+  broadcastCaro(room)
+}
+
+function leaveCaroRoom(socket,meta) {
+  const room=caroRooms.get(meta.code)
+  clients.delete(socket)
+  if (!room) return
+  const opponent=meta.player===X_PLAYER?room.oPlayer:room.xPlayer
+  if (opponent?.readyState===WebSocket.OPEN) {
+    send(opponent,{type:'caro_opponent_left',message:'Đối thủ đã rời phòng'})
+  }
+  caroRooms.delete(meta.code)
+}
+
+function broadcastCaro(room) {
+  for (const [socket,player] of [[room.xPlayer,X_PLAYER],[room.oPlayer,O_PLAYER]]) {
+    if (socket?.readyState===WebSocket.OPEN) {
+      send(socket,{
+        type:'caro_state',
+        code:room.code,
+        player,
+        status:room.xPlayer&&room.oPlayer?'playing':'waiting',
+        board:room.board,
+        currentPlayer:room.currentPlayer,
+        history:room.history,
+        winner:room.winner
+      })
+    }
+  }
+}
+
 function send(socket,data) { if (socket.readyState===WebSocket.OPEN) socket.send(JSON.stringify(data)) }
 function randomCode() { return Array.from({length:6},()=> 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('') }
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { BLACK, LABELS, RED, applyMove, chooseAiMove, initialBoard, isInCheck, legalMoves, movesFor, notation } from './engine.js'
+import { BOARD_SIZE, EMPTY, X_PLAYER, O_PLAYER, createEmptyBoard, checkWinner, isBoardFull, findBestMove } from './caro.js'
 
 const UndoIcon = () => <svg viewBox="0 0 24 24"><path d="M9 7 4 12l5 5M5 12h8a6 6 0 1 1 0 12"/></svg>
 const ResetIcon = () => <svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6.1 8A7 7 0 0 1 18 6l2 2M17.9 16A7 7 0 0 1 6 18l-2-2"/></svg>
@@ -10,8 +11,8 @@ const BackIcon = () => <svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
 const GAMES = [
   {id:'xiangqi',title:'Cờ Tướng',subtitle:'Kỳ phùng địch thủ',category:'Chiến thuật',players:'1–2 người',badge:'Chơi ngay',symbol:'將',tone:'crimson',available:true,description:'Đấu trí với cao thủ máy, chơi cùng bạn bè hoặc tạo phòng online.'},
   {id:'werewolf',title:'Ma Sói',subtitle:'Sống sót qua đêm dài',category:'Nhập vai',players:'5–12 người',badge:'Chơi ngay',symbol:'☾',tone:'werewolf',available:true},
+  {id:'caro',title:'Cờ Caro',subtitle:'Năm quân liên tiếp',category:'Trí tuệ',players:'2 người',badge:'Chơi ngay',symbol:'✕',tone:'teal',available:true},
   {id:'chess',title:'Cờ Vua',subtitle:'Vương quyền đối đầu',category:'Chiến thuật',players:'2 người',badge:'Sắp ra mắt',symbol:'♞',tone:'indigo'},
-  {id:'caro',title:'Cờ Caro',subtitle:'Năm quân liên tiếp',category:'Trí tuệ',players:'2 người',badge:'Sắp ra mắt',symbol:'✕',tone:'teal'},
   {id:'sudoku',title:'Sudoku',subtitle:'Thử thách con số',category:'Giải đố',players:'1 người',badge:'Sắp ra mắt',symbol:'9',tone:'amber'},
   {id:'cards',title:'Tiến Lên',subtitle:'Về nhất, thắng lớn',category:'Bài lá',players:'2–4 người',badge:'Sắp ra mắt',symbol:'A',tone:'violet'},
   {id:'mines',title:'Dò Mìn',subtitle:'Mở ô, tránh bẫy',category:'Giải đố',players:'1 người',badge:'Sắp ra mắt',symbol:'✦',tone:'slate'},
@@ -19,7 +20,7 @@ const GAMES = [
 ]
 
 export default function App() {
-  const gameFromHash=()=>['xiangqi','werewolf'].includes(location.hash.slice(1))?location.hash.slice(1):'hub'
+  const gameFromHash=()=>['xiangqi','werewolf','caro'].includes(location.hash.slice(1))?location.hash.slice(1):'hub'
   const [screen,setScreen] = useState(gameFromHash)
 
   useEffect(()=>{
@@ -29,7 +30,7 @@ export default function App() {
   },[])
 
   function openGame(id) {
-    if (!['xiangqi','werewolf'].includes(id)) return
+    if (!['xiangqi','werewolf','caro'].includes(id)) return
     location.hash=id
     setScreen(id)
   }
@@ -41,6 +42,7 @@ export default function App() {
 
   if (screen==='xiangqi') return <XiangqiGame onExit={goHome}/>
   if (screen==='werewolf') return <WerewolfGame onExit={goHome}/>
+  if (screen==='caro') return <CaroGame onExit={goHome}/>
   return <GameHub onOpen={openGame}/>
 }
 
@@ -54,7 +56,7 @@ function GameHub({onOpen}) {
     <nav className="hub-nav">
       <a className="hub-brand" href="#top" aria-label="Về đầu trang"><span>俠</span><div><strong>DOÃN ĐẠI HIỆP</strong><small>Giang hồ hội tụ</small></div></a>
       <div className="nav-links"><a href="#games">Các cuộc so tài</a><a href="#featured">Đại hiệp đề cử</a></div>
-      <div className="nav-status"><i></i><span>2 đấu trường đang mở</span></div>
+      <div className="nav-status"><i></i><span>3 đấu trường đang mở</span></div>
     </nav>
 
     <section className="hub-hero" id="featured">
@@ -156,6 +158,332 @@ function WerewolfGame({onExit}) {
 }
 
 function WolfHeader({onExit}){return <header className="wolf-header"><button onClick={onExit}><BackIcon/><span>Sảnh game</span></button><a href="#werewolf"><span>☾</span><div><strong>MA SÓI</strong><small>Đêm dài chưa kết thúc</small></div></a><div className="wolf-player-tag">5–12 NGƯỜI</div></header>}
+
+function CaroGame({onExit}) {
+  const [board, setBoard] = useState(createEmptyBoard)
+  const [currentPlayer, setCurrentPlayer] = useState(X_PLAYER)
+  const [winner, setWinner] = useState(null)
+  const [gameMode, setGameMode] = useState('ai')
+  const [difficulty, setDifficulty] = useState('medium')
+  const [thinking, setThinking] = useState(false)
+  const [history, setHistory] = useState([])
+  const [sound, setSound] = useState(true)
+  const [onlineStatus, setOnlineStatus] = useState('idle')
+  const [roomCode, setRoomCode] = useState('')
+  const [joinCode, setJoinCode] = useState('')
+  const [onlinePlayer, setOnlinePlayer] = useState(null)
+  const [onlineError, setOnlineError] = useState('')
+  const onlineSocket = useRef(null)
+
+  function makeMove(row, col) {
+    if (gameMode === 'online') {
+      if (onlineStatus !== 'playing' || onlinePlayer !== currentPlayer) return
+      onlineSocket.current?.send(JSON.stringify({type:'caro_move',row,col}))
+      return
+    }
+
+    if (board[row][col] !== EMPTY || winner || thinking) return
+    if (gameMode === 'ai' && currentPlayer !== X_PLAYER) return
+
+    const newBoard = board.map(r => [...r])
+    newBoard[row][col] = currentPlayer
+    setBoard(newBoard)
+    setHistory(h => [...h, { row, col, player: currentPlayer }])
+
+    if (checkWinner(newBoard, row, col, currentPlayer)) {
+      setWinner(currentPlayer)
+      if (sound) playClick(true)
+      return
+    }
+
+    if (isBoardFull(newBoard)) {
+      setWinner('draw')
+      if (sound) playClick(false)
+      return
+    }
+
+    if (sound) playClick(false)
+    setCurrentPlayer(currentPlayer === X_PLAYER ? O_PLAYER : X_PLAYER)
+  }
+
+  useEffect(() => {
+    if (gameMode !== 'ai' || currentPlayer !== O_PLAYER || winner || thinking) return
+
+    setThinking(true)
+    const timer = setTimeout(() => {
+      const move = findBestMove(board, O_PLAYER, difficulty)
+      if (move) {
+        const newBoard = board.map(r => [...r])
+        newBoard[move.row][move.col] = O_PLAYER
+        setBoard(newBoard)
+        setHistory(h => [...h, { row: move.row, col: move.col, player: O_PLAYER }])
+
+        if (checkWinner(newBoard, move.row, move.col, O_PLAYER)) {
+          setWinner(O_PLAYER)
+          if (sound) playClick(true)
+        } else if (isBoardFull(newBoard)) {
+          setWinner('draw')
+          if (sound) playClick(false)
+        } else {
+          if (sound) playClick(false)
+          setCurrentPlayer(X_PLAYER)
+        }
+      }
+      setThinking(false)
+    }, 500)
+
+    return () => clearTimeout(timer)
+  }, [currentPlayer, gameMode, winner, board, difficulty, sound, thinking])
+
+  function reset() {
+    if (gameMode === 'online' && onlineStatus === 'playing') {
+      onlineSocket.current?.send(JSON.stringify({type:'caro_reset'}))
+      return
+    }
+    setBoard(createEmptyBoard())
+    setCurrentPlayer(X_PLAYER)
+    setWinner(null)
+    setHistory([])
+    setThinking(false)
+  }
+
+  function undo() {
+    if (history.length === 0 || thinking || gameMode === 'online') return
+    const count = gameMode === 'ai' && currentPlayer === X_PLAYER && history.length >= 2 ? 2 : 1
+    const newHistory = history.slice(0, -count)
+    const newBoard = createEmptyBoard()
+    
+    newHistory.forEach(move => {
+      newBoard[move.row][move.col] = move.player
+    })
+
+    setBoard(newBoard)
+    setHistory(newHistory)
+    setWinner(null)
+    setCurrentPlayer(newHistory.length % 2 === 0 ? X_PLAYER : O_PLAYER)
+  }
+
+  function changeMode(mode) {
+    if (gameMode === 'online' && mode !== 'online') disconnectOnline()
+    setGameMode(mode)
+    reset()
+  }
+
+  function connectOnline(action, code = '') {
+    disconnectOnline()
+    setOnlineStatus('connecting')
+    setOnlineError('')
+    const configured = import.meta.env.VITE_WS_URL
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
+    const url = configured || (import.meta.env.DEV ? `${protocol}://${location.hostname}:8080` : `${protocol}://${location.host}`)
+    const socket = new WebSocket(url)
+    onlineSocket.current = socket
+    socket.onopen = () => socket.send(JSON.stringify({ type: action, code }))
+    socket.onmessage = event => {
+      const data = JSON.parse(event.data)
+      if (data.type === 'caro_state') {
+        setRoomCode(data.code)
+        setOnlinePlayer(data.player)
+        setOnlineStatus(data.status)
+        setOnlineError('')
+        setBoard(data.board)
+        setCurrentPlayer(data.currentPlayer)
+        setHistory(data.history)
+        setWinner(data.winner)
+      } else if (data.type === 'caro_error') {
+        setOnlineError(data.message)
+        setOnlineStatus('idle')
+      } else if (data.type === 'caro_opponent_left') {
+        setOnlineError(data.message)
+        setOnlineStatus('disconnected')
+      }
+    }
+    socket.onerror = () => {
+      setOnlineError(import.meta.env.DEV ? 'Không thể kết nối. Hãy chạy npm run dev.' : 'Không thể kết nối máy chủ')
+      setOnlineStatus('idle')
+    }
+    socket.onclose = () => {
+      if (!socket.intentional) setOnlineStatus(s => s === 'idle' ? s : 'disconnected')
+    }
+  }
+
+  function disconnectOnline() {
+    const socket = onlineSocket.current
+    if (socket) {
+      socket.intentional = true
+      socket.close()
+    }
+    onlineSocket.current = null
+    setOnlineStatus('idle')
+    setRoomCode('')
+    setOnlinePlayer(null)
+    setOnlineError('')
+  }
+
+  function copyRoomCode() {
+    navigator.clipboard?.writeText(roomCode)
+  }
+
+  useEffect(() => () => disconnectOnline(), [])
+
+  const xName = gameMode === 'online' ? (onlinePlayer === X_PLAYER ? 'Bạn' : 'Đối thủ') : gameMode === 'ai' ? 'Bạn' : 'Người chơi 1'
+  const oName = gameMode === 'online' ? (onlinePlayer === O_PLAYER ? 'Bạn' : 'Đối thủ') : gameMode === 'ai' ? 'Máy' : 'Người chơi 2'
+  const lastMove = history[history.length - 1]
+
+  return <main className="app-shell caro-shell">
+    <header className="game-header">
+      <button className="back-to-hub" onClick={onExit} aria-label="Quay về sảnh game"><BackIcon/><span>Sảnh game</span></button>
+      <div className="brand-mark caro-mark">✕</div>
+      <div><h1>CỜ CARO</h1><p>Năm quân liên tiếp</p></div>
+      <button className="sound" onClick={() => setSound(s=>!s)} aria-label="Bật tắt âm thanh">{sound ? '♪' : '×'}<span>{sound ? 'Âm thanh' : 'Đã tắt'}</span></button>
+    </header>
+
+    <section className="game-layout caro-layout">
+      <aside className="left-panel panel">
+        <div className="player-card machine">
+          <div className="avatar caro-o">O</div>
+          <div>
+            <span>QUÂN O</span>
+            <strong>{oName}</strong>
+            <small>{gameMode === 'ai' ? (thinking ? 'Đang suy nghĩ…' : 'Sẵn sàng') : (currentPlayer === O_PLAYER && !winner ? 'Đang đến lượt' : 'Đang chờ')}</small>
+          </div>
+        </div>
+        <div className="versus"><span></span><b>ĐỐI ĐẦU</b><span></span></div>
+        <div className="player-card you">
+          <div className="avatar caro-x">X</div>
+          <div>
+            <span>QUÂN X</span>
+            <strong>{xName}</strong>
+            <small>{currentPlayer === X_PLAYER && !winner ? 'Đang đến lượt' : 'Đang chờ'}</small>
+          </div>
+        </div>
+        <div className="divider" />
+        <label className="field-label">CHẾ ĐỘ CHƠI</label>
+        <div className="mode-switch">
+          <button className={gameMode==='ai'?'active':''} onClick={()=>changeMode('ai')}><span>⊗</span>Đấu với máy</button>
+          <button className={gameMode==='pvp'?'active':''} onClick={()=>changeMode('pvp')}><span>⊗⊗</span>Cùng máy</button>
+          <button className={gameMode==='online'?'active':''} onClick={()=>changeMode('online')}><span>◎</span>Online</button>
+        </div>
+        {gameMode === 'online' && <div className="online-box">
+          {onlineStatus === 'idle' && <>
+            <button className="create-room" onClick={() => connectOnline('caro_create')}>Tạo phòng mới</button>
+            <div className="join-row">
+              <input value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))} placeholder="MÃ PHÒNG" maxLength="6" />
+              <button disabled={joinCode.length !== 6} onClick={() => connectOnline('caro_join', joinCode)}>Vào</button>
+            </div>
+          </>}
+          {onlineStatus === 'connecting' && <div className="online-message"><i></i>Đang kết nối…</div>}
+          {onlineStatus === 'waiting' && <div className="room-ticket"><small>MÃ PHÒNG CỦA BẠN</small><strong>{roomCode}</strong><button onClick={copyRoomCode}>Sao chép mã</button><p>Đang chờ đối thủ tham gia…</p></div>}
+          {onlineStatus === 'playing' && <div className="online-message connected"><i></i>Đã kết nối · Bạn cầm quân {onlinePlayer === X_PLAYER ? 'X' : 'O'}<b>{roomCode}</b></div>}
+          {onlineStatus === 'disconnected' && <button className="create-room" onClick={() => connectOnline('caro_create')}>Tạo phòng khác</button>}
+          {onlineError && <p className="online-error">{onlineError}</p>}
+        </div>}
+        {gameMode==='ai' && <>
+          <label className="field-label difficulty-label">ĐỘ KHÓ</label>
+          <div className="difficulty">
+            {[['easy','Dễ'],['medium','Trung bình'],['hard','Khó']].map(([key,label]) => 
+              <button key={key} className={difficulty===key?'active':''} onClick={()=>{setDifficulty(key);reset()}}>{label}</button>
+            )}
+          </div>
+        </>}
+        <div className="tip">
+          <b>{gameMode === 'online' ? 'Phòng đấu riêng' : gameMode === 'pvp' ? 'Chơi cùng máy' : 'Luật chơi'}</b>
+          <p>{gameMode === 'online' ? 'Gửi mã phòng cho bạn bè để vào đấu từ thiết bị khác.' : gameMode === 'pvp' ? 'Hai người lần lượt điều khiển quân X và quân O.' : 'Đặt 5 quân cùng màu liên tiếp theo hàng ngang, dọc hoặc chéo để chiến thắng.'}</p>
+        </div>
+      </aside>
+
+      <div className="board-wrap caro-board-wrap">
+        <div className={`turn-banner ${thinking?'is-thinking':''}`}>
+          <span className={currentPlayer === X_PLAYER ? 'x-player' : 'o-player'}></span>
+          {winner ? 
+            winner === 'draw' ? 'Hòa!' : `${winner === X_PLAYER ? xName : oName} chiến thắng!` 
+            : gameMode === 'online' && onlineStatus !== 'playing' ? (onlineStatus === 'waiting' ? 'Đang chờ đối thủ…' : 'Hãy tạo hoặc tham gia phòng')
+            : thinking ? 'Máy đang suy nghĩ…' 
+            : gameMode === 'online' ? (currentPlayer === onlinePlayer ? 'Đến lượt bạn' : 'Đến lượt đối thủ')
+            : gameMode === 'pvp' ? `Lượt của ${currentPlayer === X_PLAYER ? 'X · ' + xName : 'O · ' + oName}` 
+            : currentPlayer === X_PLAYER ? 'Lượt của bạn' : 'Lượt của máy'}
+        </div>
+        <CaroBoard board={board} onCellClick={makeMove} lastMove={lastMove} />
+        <div className="board-actions">
+          <button onClick={undo} disabled={history.length === 0 || thinking || gameMode === 'online'}><UndoIcon/>Đi lại</button>
+          <button onClick={reset}><ResetIcon/>Ván mới</button>
+        </div>
+      </div>
+
+      <aside className="right-panel panel">
+        <div className="panel-title">
+          <span>✕</span>
+          <div>
+            <strong>Lịch sử nước đi</strong>
+            <small>{history.length} nước đã đi</small>
+          </div>
+        </div>
+        <div className="move-list caro-moves">
+          {!history.length && <div className="empty"><div>○</div><p>Các nước đi sẽ xuất hiện tại đây</p></div>}
+          {history.map((move, i) => (
+            <div className="move-row" key={i}>
+              <b>{i + 1}.</b>
+              <span className={move.player === X_PLAYER ? 'x-move' : 'o-move'}>
+                {move.player === X_PLAYER ? 'X' : 'O'} → ({String.fromCharCode(65 + move.col)}{move.row + 1})
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="legend">
+          <span><i className="x-dot"></i>Quân X</span>
+          <span><i className="o-dot"></i>Quân O</span>
+        </div>
+      </aside>
+    </section>
+
+    <footer className="caro-footer">
+      <span>✕</span>
+      <p>"Năm quân liên tiếp, chiến thắng thuộc về bạn"</p>
+      <span>○</span>
+    </footer>
+
+    {winner && <div className="modal-backdrop">
+      <div className="result-modal caro-modal">
+        <div className={winner === X_PLAYER ? 'x-win' : winner === O_PLAYER ? 'o-win' : 'draw-win'}>
+          {winner === 'draw' ? '=' : winner === X_PLAYER ? 'X' : 'O'}
+        </div>
+        <small>VÁN ĐẤU KẾT THÚC</small>
+        <h2>{winner === 'draw' ? 'Hòa!' : (gameMode === 'online' && winner === onlinePlayer) || (gameMode !== 'online' && winner === X_PLAYER) ? `${xName} chiến thắng!` : `${oName} chiến thắng!`}</h2>
+        <p>{winner === 'draw' ? 'Bàn cờ đã đầy mà không ai thắng.' : (gameMode === 'online' && winner === onlinePlayer) || (gameMode === 'ai' && winner === X_PLAYER) ? 'Xuất sắc! Bạn đã giành chiến thắng.' : gameMode === 'ai' ? 'Máy chiến thắng. Thử lại nhé!' : 'Một ván cờ hay!'}</p>
+        <button onClick={reset}>Chơi ván mới</button>
+      </div>
+    </div>}
+  </main>
+}
+
+function CaroBoard({board, onCellClick, lastMove}) {
+  return <div className="caro-board">
+    <div className="caro-grid">
+      {board.map((row, rowIndex) => 
+        row.map((cell, colIndex) => (
+          <button
+            key={`${rowIndex}-${colIndex}`}
+            className={`caro-cell ${cell === X_PLAYER ? 'has-x' : cell === O_PLAYER ? 'has-o' : ''} ${lastMove?.row === rowIndex && lastMove?.col === colIndex ? 'last-move' : ''}`}
+            onClick={() => onCellClick(rowIndex, colIndex)}
+            disabled={cell !== EMPTY}
+            aria-label={`Ô ${String.fromCharCode(65 + colIndex)}${rowIndex + 1}`}
+          >
+            {cell === X_PLAYER && <span className="piece-x">✕</span>}
+            {cell === O_PLAYER && <span className="piece-o">○</span>}
+          </button>
+        ))
+      )}
+    </div>
+    <div className="caro-labels">
+      <div className="col-labels">
+        {Array.from({length: BOARD_SIZE}, (_, i) => <span key={i}>{String.fromCharCode(65 + i)}</span>)}
+      </div>
+      <div className="row-labels">
+        {Array.from({length: BOARD_SIZE}, (_, i) => <span key={i}>{i + 1}</span>)}
+      </div>
+    </div>
+  </div>
+}
 
 function XiangqiGame({onExit}) {
   const [board,setBoard] = useState(initialBoard)
