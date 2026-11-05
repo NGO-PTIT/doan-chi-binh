@@ -1,19 +1,23 @@
+import { IQ_QUESTIONS } from './src/iq.js'
 import http from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, randomInt } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, WebSocket } from 'ws'
 import { BLACK, RED, applyMove, initialBoard, legalMoves, notation, other } from './src/engine.js'
-import { BOARD_SIZE, EMPTY, X_PLAYER, O_PLAYER, checkWinner, isBoardFull } from './src/caro.js'
+import { BOARD_SIZE, EMPTY, X_PLAYER, O_PLAYER, createEmptyBoard, checkWinner, isBoardFull } from './src/caro.js'
 
 const root=path.dirname(fileURLToPath(import.meta.url))
 const dist=path.join(root,'dist')
-const port=Number(process.env.PORT)||8080
+const port=Number(process.env.PORT ?? 8080)
 const wolfTurnMs=Math.max(100,Number(process.env.WOLF_TURN_MS)||60000)
+const wolfReconnectMs=Math.max(100,Number(process.env.WOLF_RECONNECT_MS)||60000)
 const rooms=new Map()
 const caroRooms=new Map()
 const wolfRooms=new Map()
+const iqRooms=new Map()
+const iqTurnMs=Math.max(100,Number(process.env.IQ_TURN_MS)||20000)
 const clients=new WeakMap()
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon'}
 
@@ -25,7 +29,7 @@ const server=http.createServer(async(req,res)=>{
       return res.end(JSON.stringify({status:'ok',service:'doan-dai-hiep'}))
     }
     let file=path.resolve(dist,`.${pathname}`)
-    if (!file.startsWith(dist)) throw new Error('Invalid path')
+    if (file!==dist&&!file.startsWith(dist+path.sep)) throw new Error('Invalid path')
     try { if ((await stat(file)).isDirectory()) file=path.join(file,'index.html') } catch { file=path.join(dist,'index.html') }
     const data=await readFile(file)
     res.writeHead(200,{'Content-Type':mime[path.extname(file)]||'application/octet-stream','Cache-Control':file.endsWith('.html')?'no-cache':'public, max-age=31536000, immutable'})
@@ -33,26 +37,35 @@ const server=http.createServer(async(req,res)=>{
   } catch { res.writeHead(404); res.end('Not found') }
 })
 
-const wss=new WebSocketServer({server})
+const wss=new WebSocketServer({server,maxPayload:16*1024})
 wss.on('connection',socket=>{
   socket.isAlive=true
+  socket.on('error',()=>socket.terminate())
   socket.on('pong',()=>{socket.isAlive=true})
   socket.on('message',raw=>{
     let data
     try { data=JSON.parse(raw) } catch { return send(socket,{type:'error',message:'Dữ liệu không hợp lệ'}) }
+    if (!data||typeof data!=='object'||Array.isArray(data)||typeof data.type!=='string') return send(socket,{type:'error',message:'Dữ liệu không hợp lệ'})
+    if (data.type==='iq_create') return createIqRoom(socket,data.name,data.questionCount)
+    if (data.type==='iq_join') return joinIqRoom(socket,typeof data.code==='string'?data.code.toUpperCase().trim():'',data.name,data.reconnectToken)
+    if (data.type==='iq_start') return startIqGame(socket)
+    if (data.type==='iq_answer') return answerIq(socket,data.questionId,data.answer)
+    if (data.type==='iq_next') return nextIqQuestion(socket,data.questionId)
+    if (data.type==='iq_end') return endIqRoom(socket)
     if (data.type==='create') return createRoom(socket)
-    if (data.type==='join') return joinRoom(socket,String(data.code||'').toUpperCase().trim())
+    if (data.type==='join') return joinRoom(socket,(typeof data.code==='string'?data.code.toUpperCase().trim():''))
     if (data.type==='caro_create') return createCaroRoom(socket)
-    if (data.type==='caro_join') return joinCaroRoom(socket,String(data.code||'').toUpperCase().trim())
+    if (data.type==='caro_join') return joinCaroRoom(socket,(typeof data.code==='string'?data.code.toUpperCase().trim():''))
     if (data.type==='caro_move') return caroMove(socket,data.row,data.col)
     if (data.type==='caro_reset') return resetCaroRoom(socket)
     if (data.type==='wolf_create') return createWolfRoom(socket,data.name)
-    if (data.type==='wolf_join') return joinWolfRoom(socket,String(data.code||'').toUpperCase().trim(),data.name)
+    if (data.type==='wolf_join') return joinWolfRoom(socket,(typeof data.code==='string'?data.code.toUpperCase().trim():''),data.name,data.reconnectToken)
     if (data.type==='wolf_start') return startWolfGame(socket)
     if (data.type==='wolf_end') return endWolfRoom(socket)
     if (data.type==='wolf_action') return wolfAction(socket,data.target)
+    if (data.type==='wolf_shot') return wolfShot(socket,data.target)
     if (data.type==='wolf_vote') return wolfVote(socket,data.target)
-    const meta=clients.get(socket), room=meta&&rooms.get(meta.code)
+    const meta=clients.get(socket), room=meta?.game==='xiangqi'&&rooms.get(meta.code)
     if (!room) return send(socket,{type:'error',message:'Phòng không còn tồn tại'})
     if (data.type==='move') playMove(socket,room,data.move)
     if (data.type==='reset') resetRoom(room)
@@ -63,7 +76,7 @@ wss.on('connection',socket=>{
 function createRoom(socket) {
   leaveRoom(socket)
   let code
-  do { code=randomCode() } while (rooms.has(code))
+  do { code=randomCode() } while (rooms.has(code)||caroRooms.has(code)||wolfRooms.has(code)||iqRooms.has(code))
   const room={code,board:initialBoard(),turn:RED,history:[],winner:null,red:socket,black:null}
   rooms.set(code,room); clients.set(socket,{game:'xiangqi',code,color:RED}); broadcast(room)
 }
@@ -95,6 +108,7 @@ function resetRoom(room) {
 function leaveRoom(socket) {
   const meta=clients.get(socket)
   if (!meta) return
+  if (meta.game==='iq') return leaveIqRoom(socket,meta)
   if (meta.game==='wolf') return leaveWolfRoom(socket,meta)
   if (meta.game==='caro') return leaveCaroRoom(socket,meta)
   const room=rooms.get(meta.code); clients.delete(socket)
@@ -111,15 +125,11 @@ function broadcast(room) {
 }
 
 // Caro Room Management
-function createCaroEmptyBoard() {
-  return Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(EMPTY))
-}
-
 function createCaroRoom(socket) {
   leaveRoom(socket)
   let code
-  do { code=randomCode() } while (rooms.has(code)||caroRooms.has(code)||wolfRooms.has(code))
-  const room={code,board:createCaroEmptyBoard(),currentPlayer:X_PLAYER,history:[],winner:null,xPlayer:socket,oPlayer:null}
+  do { code=randomCode() } while (rooms.has(code)||caroRooms.has(code)||wolfRooms.has(code)||iqRooms.has(code))
+  const room={code,board:createEmptyBoard(),currentPlayer:X_PLAYER,history:[],winner:null,xPlayer:socket,oPlayer:null}
   caroRooms.set(code,room)
   clients.set(socket,{game:'caro',code,player:X_PLAYER})
   broadcastCaro(room)
@@ -141,7 +151,7 @@ function caroMove(socket,row,col) {
   const room=caroRooms.get(meta.code)
   if (!room||!room.xPlayer||!room.oPlayer||room.winner) return
   if (meta.player!==room.currentPlayer) return
-  if (row<0||row>=BOARD_SIZE||col<0||col>=BOARD_SIZE||room.board[row][col]!==EMPTY) {
+  if (!Number.isInteger(row)||!Number.isInteger(col)||row<0||row>=BOARD_SIZE||col<0||col>=BOARD_SIZE||room.board[row][col]!==EMPTY) {
     return send(socket,{type:'caro_error',message:'Nước đi không hợp lệ'})
   }
 
@@ -166,7 +176,7 @@ function resetCaroRoom(socket) {
   if (!meta||meta.game!=='caro') return
   const room=caroRooms.get(meta.code)
   if (!room) return
-  room.board=createCaroEmptyBoard()
+  room.board=createEmptyBoard()
   room.currentPlayer=X_PLAYER
   room.history=[]
   room.winner=null
@@ -202,7 +212,7 @@ function broadcastCaro(room) {
 }
 
 function send(socket,data) { if (socket.readyState===WebSocket.OPEN) socket.send(JSON.stringify(data)) }
-function randomCode() { return Array.from({length:6},()=> 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('') }
+function randomCode() { return Array.from({length:6},()=> 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[randomInt(32)]).join('') }
 
 const WOLF_STEPS=['guard','wolf','seer','witch']
 const WOLF_NARRATION={
@@ -212,28 +222,31 @@ const WOLF_NARRATION={
   witch:'Phù Thủy thức giấc và đưa ra quyết định trước bình minh.',
 }
 
-function cleanName(value) { return String(value||'').trim().replace(/\s+/g,' ').slice(0,20) }
+function cleanName(value) { return (typeof value==='string'?value:'').trim().replace(/\s+/g,' ').slice(0,20) }
 function createWolfRoom(socket,nameValue) {
   const name=cleanName(nameValue)
   if (!name) return send(socket,{type:'wolf_error',message:'Hãy nhập tên của bạn'})
   leaveRoom(socket)
   let code
-  do { code=randomCode() } while (rooms.has(code)||wolfRooms.has(code))
-  const player={id:randomUUID(),name,socket,connected:true,host:true,alive:true,role:null,vote:null,privateMessage:''}
+  do { code=randomCode() } while (rooms.has(code)||caroRooms.has(code)||wolfRooms.has(code)||iqRooms.has(code))
+  const player={id:randomUUID(),reconnectToken:randomUUID(),name,socket,connected:true,host:true,alive:true,role:null,vote:null,privateMessage:''}
   const room={code,status:'lobby',players:[player],phase:'lobby',round:0,step:null,winner:null,narration:'Phòng đã sẵn sàng. Hãy mời mọi người tham gia.',actions:new Map(),log:[],guardTarget:null,wolfTarget:null,witchSaveUsed:false,witchPoisonUsed:false}
   wolfRooms.set(code,room);clients.set(socket,{game:'wolf',code,id:player.id});broadcastWolf(room)
 }
-function joinWolfRoom(socket,code,nameValue) {
+function joinWolfRoom(socket,code,nameValue,reconnectToken) {
   const room=wolfRooms.get(code),name=cleanName(nameValue)
   if (!room) return send(socket,{type:'wolf_error',message:'Không tìm thấy phòng này'})
   if (!name) return send(socket,{type:'wolf_error',message:'Hãy nhập tên của bạn'})
-  let player=room.players.find(p=>p.name.toLocaleLowerCase('vi')===name.toLocaleLowerCase('vi')&&!p.connected)
-  if (player) { player.socket=socket;player.connected=true }
-  else {
+  if (clients.get(socket)?.code===code) return send(socket,{type:'wolf_error',message:'Bạn đã ở trong phòng này'})
+  let player=room.players.find(p=>p.name.toLocaleLowerCase('vi')===name.toLocaleLowerCase('vi'))
+  if (player) {
+    if (player.connected||typeof reconnectToken!=='string'||reconnectToken!==player.reconnectToken) return send(socket,{type:'wolf_error',message:'Tên đã được sử dụng hoặc phiên kết nối không hợp lệ'})
+    clearTimeout(player.reconnectTimer)
+  } else {
     if (room.status!=='lobby') return send(socket,{type:'wolf_error',message:'Ván chơi đã bắt đầu'})
     if (room.players.length>=12) return send(socket,{type:'wolf_error',message:'Phòng đã đủ 12 người'})
-    if (room.players.some(p=>p.name.toLocaleLowerCase('vi')===name.toLocaleLowerCase('vi'))) return send(socket,{type:'wolf_error',message:'Tên này đã có trong phòng'})
-    player={id:randomUUID(),name,socket,connected:true,host:false,alive:true,role:null,vote:null,privateMessage:''};room.players.push(player)
+    player={id:randomUUID(),reconnectToken:randomUUID(),name,socket,connected:true,host:false,alive:true,role:null,vote:null,privateMessage:''}
+    room.players.push(player)
   }
   leaveRoom(socket);player.socket=socket;player.connected=true;clients.set(socket,{game:'wolf',code,id:player.id});broadcastWolf(room)
 }
@@ -243,8 +256,19 @@ function leaveWolfRoom(socket,meta) {
   if (!room||!player) return
   player.connected=false;player.socket=null
   if (room.status==='lobby') room.players=room.players.filter(p=>p.id!==player.id)
-  if (!room.players.some(p=>p.connected)) { clearWolfTimer(room);wolfRooms.delete(room.code);return }
-  if (player.host) {player.host=false;const next=room.players.find(p=>p.connected);if(next)next.host=true}
+  if (!room.players.some(p=>p.connected)) {
+    clearWolfTimer(room);room.players.forEach(p=>clearTimeout(p.reconnectTimer));wolfRooms.delete(room.code);return
+  }
+  if (player.host) {player.host=false;room.players.find(p=>p.connected).host=true}
+  if (room.status==='playing') player.reconnectTimer=setTimeout(()=>{
+    if(player.connected||room.status!=='playing')return
+    player.alive=false;player.vote=null;room.actions.delete(player.id)
+    room.log.unshift({round:room.round,phase:room.phase,text:`${player.name} đã rời ván vì mất kết nối quá lâu.`})
+    if(room.phase==='hunter'&&room.hunterId===player.id)return finishWolfShot(room,null)
+    if(room.phase!=='hunter'&&checkWolfWinner(room))return
+    if(room.phase==='day')resolveWolfVotes(room)
+    else broadcastWolf(room)
+  },wolfReconnectMs)
   broadcastWolf(room)
 }
 function wolfRoles(count) {
@@ -260,7 +284,10 @@ function wolfRoles(count) {
 function startWolfGame(socket) {
   const meta=clients.get(socket),room=meta&&wolfRooms.get(meta.code),player=room?.players.find(p=>p.id===meta.id)
   if (!room||!player?.host||!['lobby','finished'].includes(room.status)) return
-  if (room.players.length<5) return send(socket,{type:'wolf_error',message:'Cần ít nhất 5 người để bắt đầu'})
+  const connected=room.players.filter(p=>p.connected)
+  if (connected.length<5) return send(socket,{type:'wolf_error',message:'Cần ít nhất 5 người để bắt đầu'})
+  room.players.forEach(p=>clearTimeout(p.reconnectTimer));room.players=connected
+  room.witchSaveUsed=false;room.witchPoisonUsed=false;room.hunterId=null
   const roles=wolfRoles(room.players.length)
   room.players.forEach((p,i)=>{p.role=roles[i];p.alive=true;p.vote=null;p.privateMessage='';p.host=Boolean(p.host)})
   room.status='playing';room.round=1;room.winner=null;room.log=[];beginWolfNight(room)
@@ -268,7 +295,7 @@ function startWolfGame(socket) {
 function endWolfRoom(socket) {
   const meta=clients.get(socket),room=meta&&wolfRooms.get(meta.code),player=room?.players.find(p=>p.id===meta.id)
   if (!room||!player?.host) return send(socket,{type:'wolf_error',message:'Chỉ chủ phòng mới có thể kết thúc phòng'})
-  clearWolfTimer(room)
+  clearWolfTimer(room);room.players.forEach(p=>clearTimeout(p.reconnectTimer))
   for(const member of room.players)if(member.socket?.readyState===WebSocket.OPEN){
     send(member.socket,{type:'wolf_closed',message:'Chủ phòng đã kết thúc phòng chơi.'})
     clients.delete(member.socket)
@@ -347,6 +374,11 @@ function resolveWolfNight(room) {
   for(const id of deaths){const p=room.players.find(x=>x.id===id);if(p)p.alive=false}
   const names=deaths.map(id=>room.players.find(p=>p.id===id)?.name).filter(Boolean)
   room.log.unshift({round:room.round,phase:'night',text:names.length?`${names.join(' và ')} đã không qua khỏi đêm nay.`:'Một đêm bình yên, không ai bị loại.'})
+  room.nightDeaths=names
+  if(beginWolfShot(room,deaths,'day'))return
+  beginWolfDay(room,names)
+}
+function beginWolfDay(room,names=[]) {
   if(checkWolfWinner(room))return
   room.phase='day';room.step='vote';room.actions=new Map();room.players.forEach(p=>p.vote=null)
   room.narration=names.length?`Bình minh lên. ${names.join(' và ')} đã rời cuộc chơi.`:'Bình minh lên. Đêm qua không ai bị loại.';broadcastWolf(room)
@@ -356,15 +388,47 @@ function wolfVote(socket,target) {
   if (!room||room.status!=='playing'||room.phase!=='day'||!player?.alive) return
   if(!room.players.some(p=>p.id===target&&p.alive)||target===player.id)return
   player.vote=target;room.actions.set(player.id,target)
-  if(room.actions.size<room.players.filter(p=>p.alive).length){broadcastWolf(room);return}
-  const counts={};for(const id of room.actions.values())counts[id]=(counts[id]||0)+1
+  resolveWolfVotes(room)
+}
+function resolveWolfVotes(room) {
+  const voters=room.players.filter(p=>p.alive)
+  if(voters.some(p=>!p.vote)){broadcastWolf(room);return}
+  const counts={};for(const p of voters)if(voters.some(target=>target.id===p.vote))counts[p.vote]=(counts[p.vote]||0)+1
   const ranked=Object.entries(counts).sort((a,b)=>b[1]-a[1]);let eliminated=null
   if(ranked[0]&&(!ranked[1]||ranked[0][1]>ranked[1][1]))eliminated=ranked[0][0]
   if(eliminated)room.players.find(p=>p.id===eliminated).alive=false
   const name=room.players.find(p=>p.id===eliminated)?.name
   room.log.unshift({round:room.round,phase:'day',text:name?`${name} bị cả làng biểu quyết loại.`:'Cuộc biểu quyết hòa, không ai bị loại.'})
+  if(beginWolfShot(room,[eliminated],'night'))return
   if(checkWolfWinner(room))return
   room.round++;beginWolfNight(room)
+}
+function beginWolfShot(room,deaths,nextPhase) {
+  const hunter=room.players.find(p=>p.role==='hunter'&&deaths.includes(p.id))
+  if(!hunter)return false
+  clearWolfTimer(room)
+  room.phase='hunter';room.step='hunter';room.hunterId=hunter.id;room.afterShot=nextPhase
+  room.narration='Thợ Săn đã bị loại và có một phát bắn cuối cùng.'
+  room.deadline=Date.now()+wolfTurnMs
+  room.stepTimer=setTimeout(()=>finishWolfShot(room,null),wolfTurnMs)
+  broadcastWolf(room);return true
+}
+function wolfShot(socket,target) {
+  const meta=clients.get(socket),room=meta?.game==='wolf'&&wolfRooms.get(meta.code)
+  if(!room||room.status!=='playing'||room.phase!=='hunter'||room.hunterId!==meta.id)return
+  if(target!==null&&!room.players.some(p=>p.id===target&&p.alive))return
+  finishWolfShot(room,target)
+}
+function finishWolfShot(room,target) {
+  clearWolfTimer(room)
+  if(target){
+    const victim=room.players.find(p=>p.id===target);victim.alive=false
+    room.log.unshift({round:room.round,phase:'hunter',text:`Thợ Săn đã bắn ${victim.name}.`})
+  }
+  room.hunterId=null
+  if(checkWolfWinner(room))return
+  if(room.afterShot==='day')beginWolfDay(room,room.nightDeaths)
+  else {room.round++;beginWolfNight(room)}
 }
 function checkWolfWinner(room) {
   const wolves=room.players.filter(p=>p.alive&&p.role==='wolf').length,others=room.players.filter(p=>p.alive&&p.role!=='wolf').length
@@ -373,9 +437,104 @@ function checkWolfWinner(room) {
 }
 function broadcastWolf(room) {
   for(const player of room.players)if(player.socket?.readyState===WebSocket.OPEN){
-    const canAct=room.status==='playing'&&player.alive&&((room.phase==='night'&&player.role===room.step)||(room.phase==='day'&&!player.vote))
-    send(player.socket,{type:'wolf_state',code:room.code,status:room.status,phase:room.phase,round:room.round,step:room.step,deadline:room.deadline||null,votesSubmitted:room.players.filter(p=>p.alive&&p.vote).length,votesRequired:room.players.filter(p=>p.alive).length,winner:room.winner,narration:room.narration,log:room.log.slice(0,6),you:{id:player.id,name:player.name,role:room.status==='lobby'?null:player.role,alive:player.alive,host:player.host,privateMessage:player.privateMessage,canAct,hasVoted:Boolean(player.vote),wolfIds:player.role==='wolf'?room.players.filter(p=>p.role==='wolf').map(p=>p.id):[],canSave:player.role==='witch'&&!room.witchSaveUsed&&Boolean(room.wolfTarget),canPoison:player.role==='witch'&&!room.witchPoisonUsed,wolfVictim:player.role==='witch'&&room.wolfTarget?room.players.find(p=>p.id===room.wolfTarget)?.name:null},players:room.players.map(p=>({id:p.id,name:p.name,alive:p.alive,connected:p.connected,host:p.host,voteDone:Boolean(p.vote)}))})
+    const canAct=room.status==='playing'&&((room.phase==='hunter'&&room.hunterId===player.id)||(player.alive&&((room.phase==='night'&&player.role===room.step)||(room.phase==='day'&&!player.vote))))
+    send(player.socket,{type:'wolf_state',code:room.code,status:room.status,phase:room.phase,round:room.round,step:room.step,deadline:room.deadline||null,votesSubmitted:room.players.filter(p=>p.alive&&p.vote).length,votesRequired:room.players.filter(p=>p.alive).length,winner:room.winner,narration:room.narration,log:room.log.slice(0,6),you:{id:player.id,reconnectToken:player.reconnectToken,name:player.name,role:room.status==='lobby'?null:player.role,alive:player.alive,host:player.host,privateMessage:player.privateMessage,canAct,hasVoted:Boolean(player.vote),wolfIds:player.role==='wolf'?room.players.filter(p=>p.role==='wolf').map(p=>p.id):[],canSave:player.role==='witch'&&!room.witchSaveUsed&&Boolean(room.wolfTarget),canPoison:player.role==='witch'&&!room.witchPoisonUsed,wolfVictim:player.role==='witch'&&room.wolfTarget?room.players.find(p=>p.id===room.wolfTarget)?.name:null},players:room.players.map(p=>({id:p.id,name:p.name,alive:p.alive,connected:p.connected,host:p.host,voteDone:Boolean(p.vote)}))})
   }
+}
+
+function createIqRoom(socket,nameValue,questionCount=5) {
+  const name=cleanName(nameValue)
+  if(!name)return send(socket,{type:'iq_error',message:'Hãy nhập tên của bạn'})
+  if(![5,10,15].includes(questionCount))return send(socket,{type:'iq_error',message:'Chọn 5, 10 hoặc 15 câu'})
+  leaveRoom(socket)
+  let code
+  do {code=randomCode()}while(rooms.has(code)||caroRooms.has(code)||wolfRooms.has(code)||iqRooms.has(code))
+  const player={id:randomUUID(),reconnectToken:randomUUID(),name,socket,connected:true,host:true,score:0,correct:0,answer:null,points:0}
+  const room={code,phase:'lobby',players:[player],questionCount,questions:[],index:0,deadline:null,timer:null}
+  iqRooms.set(code,room);clients.set(socket,{game:'iq',code,id:player.id});broadcastIq(room)
+}
+function joinIqRoom(socket,code,nameValue,reconnectToken) {
+  const room=iqRooms.get(code),name=cleanName(nameValue)
+  if(!room)return send(socket,{type:'iq_error',message:'Không tìm thấy phòng này'})
+  if(!name)return send(socket,{type:'iq_error',message:'Hãy nhập tên của bạn'})
+  if(clients.get(socket)?.game==='iq'&&clients.get(socket).code===code)return send(socket,{type:'iq_error',message:'Bạn đã ở trong phòng này'})
+  let player=room.players.find(p=>p.name.toLocaleLowerCase('vi')===name.toLocaleLowerCase('vi'))
+  if(player){
+    if(player.connected||typeof reconnectToken!=='string'||reconnectToken!==player.reconnectToken)return send(socket,{type:'iq_error',message:'Tên đã được sử dụng hoặc phiên kết nối không hợp lệ'})
+  }else{
+    if(room.phase!=='lobby')return send(socket,{type:'iq_error',message:'Ván chơi đã bắt đầu'})
+    if(room.players.length>=6)return send(socket,{type:'iq_error',message:'Phòng đã đủ 6 người'})
+    player={id:randomUUID(),reconnectToken:randomUUID(),name,socket,connected:true,host:false,score:0,correct:0,answer:null,points:0}
+    room.players.push(player)
+  }
+  leaveRoom(socket);player.socket=socket;player.connected=true;clients.set(socket,{game:'iq',code,id:player.id});broadcastIq(room)
+}
+function startIqGame(socket) {
+  const meta=clients.get(socket),room=meta?.game==='iq'&&iqRooms.get(meta.code),player=room?.players.find(p=>p.id===meta.id)
+  if(!room||!player?.host||!['lobby','finished'].includes(room.phase))return
+  const connected=room.players.filter(p=>p.connected)
+  if(connected.length<2)return send(socket,{type:'iq_error',message:'Cần ít nhất 2 người để bắt đầu'})
+  room.players=connected
+  room.questions=[...IQ_QUESTIONS]
+  for(let i=room.questions.length-1;i>0;i--){const j=randomInt(i+1);[room.questions[i],room.questions[j]]=[room.questions[j],room.questions[i]]}
+  room.questions=room.questions.slice(0,room.questionCount);room.index=0
+  room.players.forEach(p=>{p.score=0;p.correct=0})
+  beginIqQuestion(room)
+}
+function beginIqQuestion(room) {
+  clearTimeout(room.timer)
+  room.phase='question';room.questionId=randomUUID();room.deadline=Date.now()+iqTurnMs
+  room.players.forEach(p=>{p.answer=null;p.points=0;p.timeLeft=0})
+  room.timer=setTimeout(()=>revealIqQuestion(room),iqTurnMs)
+  broadcastIq(room)
+}
+function answerIq(socket,questionId,answer) {
+  const meta=clients.get(socket),room=meta?.game==='iq'&&iqRooms.get(meta.code),player=room?.players.find(p=>p.id===meta.id)
+  if(!room||room.phase!=='question'||questionId!==room.questionId||!player||player.answer!==null)return
+  if(Date.now()>=room.deadline){revealIqQuestion(room);return}
+  if(!Number.isInteger(answer)||answer<0||answer>3)return send(socket,{type:'iq_error',message:'Đáp án không hợp lệ'})
+  player.answer=answer;player.timeLeft=Math.min(20,Math.ceil((room.deadline-Date.now())/iqTurnMs*20))
+  if(room.players.every(p=>!p.connected||p.answer!==null))revealIqQuestion(room)
+  else broadcastIq(room)
+}
+function revealIqQuestion(room) {
+  if(room.phase!=='question')return
+  clearTimeout(room.timer);room.timer=null;room.deadline=null;room.phase='reveal'
+  const correct=room.questions[room.index].correct
+  room.players.forEach(p=>{
+    p.points=p.answer===correct?100+p.timeLeft*5:0
+    p.score+=p.points;if(p.answer===correct)p.correct++
+  })
+  broadcastIq(room)
+}
+function nextIqQuestion(socket,questionId) {
+  const meta=clients.get(socket),room=meta?.game==='iq'&&iqRooms.get(meta.code),player=room?.players.find(p=>p.id===meta.id)
+  if(!room||!player?.host||room.phase!=='reveal'||questionId!==room.questionId)return
+  if(room.index+1>=room.questions.length){room.phase='finished';broadcastIq(room);return}
+  room.index++;beginIqQuestion(room)
+}
+function leaveIqRoom(socket,meta) {
+  clients.delete(socket)
+  const room=iqRooms.get(meta.code),player=room?.players.find(p=>p.id===meta.id)
+  if(!room||!player)return
+  player.connected=false;player.socket=null
+  if(room.phase==='lobby')room.players=room.players.filter(p=>p!==player)
+  if(!room.players.some(p=>p.connected)){clearTimeout(room.timer);iqRooms.delete(room.code);return}
+  if(player.host){player.host=false;room.players.find(p=>p.connected).host=true}
+  if(room.phase==='question'&&room.players.every(p=>!p.connected||p.answer!==null))revealIqQuestion(room)
+  else broadcastIq(room)
+}
+function endIqRoom(socket) {
+  const meta=clients.get(socket),room=meta?.game==='iq'&&iqRooms.get(meta.code),player=room?.players.find(p=>p.id===meta.id)
+  if(!room||!player?.host)return
+  clearTimeout(room.timer);iqRooms.delete(room.code)
+  for(const member of room.players)if(member.socket){clients.delete(member.socket);send(member.socket,{type:'iq_closed',message:'Chủ phòng đã kết thúc phòng chơi.'});member.socket.close()}
+}
+function broadcastIq(room) {
+  const question=room.questions[room.index],revealed=['reveal','finished'].includes(room.phase)
+  const publicQuestion=question?{id:room.questionId,category:question.category,question:question.question,answers:question.answers,...(revealed?{correct:question.correct,explanation:question.explanation}:{})}:null
+  const players=room.players.map(p=>({id:p.id,name:p.name,host:p.host,connected:p.connected,score:p.score,correct:p.correct,hasAnswered:p.answer!==null,...(revealed?{answer:p.answer,points:p.points}:{})}))
+  for(const p of room.players)if(p.connected)send(p.socket,{type:'iq_state',code:room.code,phase:room.phase,index:room.index,questionCount:room.questionCount,deadline:room.deadline,serverTime:Date.now(),question:publicQuestion,players,you:{id:p.id,name:p.name,host:p.host,reconnectToken:p.reconnectToken,answer:p.answer}})
 }
 
 const heartbeat=setInterval(()=>{
@@ -385,6 +544,6 @@ const heartbeat=setInterval(()=>{
   }
 },30000)
 
-server.listen(port,'0.0.0.0',()=>console.log(`Doan Dai Hiep server: http://0.0.0.0:${port}`))
+server.listen(port,'0.0.0.0',()=>console.log(`Doan Dai Hiep server: http://0.0.0.0:${server.address().port}`))
 server.on('close',()=>clearInterval(heartbeat))
 process.on('SIGTERM',()=>server.close(()=>process.exit(0)))

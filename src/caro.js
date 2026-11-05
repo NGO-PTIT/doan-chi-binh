@@ -95,7 +95,8 @@ export function evaluatePosition(board, row, col, player) {
 
 export function findBestMove(board, player, difficulty = 'medium') {
   const opponent = player === X_PLAYER ? O_PLAYER : X_PLAYER
-  const maxDepth = difficulty === 'easy' ? 1 : difficulty === 'medium' ? 2 : 3
+  const defenseWeight = difficulty === 'easy' ? 0.4 : difficulty === 'hard' ? 2 : 1.1
+  let forcedBlock = null
   
   let bestScore = -Infinity
   let bestMove = null
@@ -145,7 +146,9 @@ export function findBestMove(board, player, difficulty = 'medium') {
     
     // Evaluate position
     let score = evaluatePosition(board, row, col, player)
-    score -= evaluatePosition(board, row, col, opponent) * 1.1 // Slightly prioritize defense
+    board[row][col] = opponent
+    if (checkWinner(board, row, col, opponent)) forcedBlock = move
+    score += evaluatePosition(board, row, col, opponent) * defenseWeight
     
     board[row][col] = EMPTY
     
@@ -155,5 +158,5 @@ export function findBestMove(board, player, difficulty = 'medium') {
     }
   }
   
-  return bestMove
+  return forcedBlock || bestMove
 }
