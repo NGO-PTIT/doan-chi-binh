@@ -95,6 +95,8 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
           await writeFile(path.join(tmpdir(),`xiangqi-caro-${width}.png`),Buffer.from(screenshot.data,'base64'))
         }
         if(route==='iq'){
+          const entryShot=await call('Page.captureScreenshot',{format:'png'})
+          await writeFile(path.join(tmpdir(),`xiangqi-iq-entry-${width}.png`),Buffer.from(entryShot.data,'base64'))
           await evaluate(`(()=>{const input=document.querySelector('.iq-room-form>label input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Browser host');input.dispatchEvent(new Event('input',{bubbles:true}))})()`)
           await evaluate(`document.querySelector('.iq-start').click()`)
           await waitFor(`!!document.querySelector('.iq-room-lobby')`)
@@ -109,9 +111,13 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
           await evaluate(`document.querySelector('.iq-room-lobby .iq-start').click()`)
           await waitFor(`!!document.querySelector('.iq-answers')`)
           await fits(`IQ online question at ${width}px`)
+          const questionShot=await call('Page.captureScreenshot',{format:'png'})
+          await writeFile(path.join(tmpdir(),`xiangqi-iq-question-${width}.png`),Buffer.from(questionShot.data,'base64'))
           for(let i=0;i<100&&guestState?.phase!=='question';i++)await delay(25)
           assert.equal(guestState?.phase,'question')
-          const correct=IQ_QUESTIONS.find(q=>q.question===guestState.question.question).correct
+          assert.ok((await evaluate(`JSON.parse(localStorage.getItem('iq_seen_questions'))`)).includes(guestState.question.key))
+          const original=IQ_QUESTIONS.find(q=>q.question===guestState.question.question)
+          const correct=guestState.question.answers.indexOf(original.answers[original.correct])
           await evaluate(`document.querySelectorAll('.iq-answers button')[${correct}].click()`)
           await waitFor(`!document.querySelector('.iq-lock').disabled`)
           await evaluate(`document.querySelector('.iq-lock').click()`)
@@ -126,6 +132,8 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
           // Leave and rejoin through the actual room-code form; the private token restores the seat.
           await evaluate(`document.querySelector('.iq-switch-mode').click()`)
           await waitFor(`!!document.querySelector('.iq-room-form')`)
+          await evaluate(`document.querySelector('.iq-entry-tabs button[data-mode="join"]').click()`)
+          await waitFor(`!!document.querySelector('.iq-join-row input')`)
           await evaluate(`(()=>{const input=document.querySelector('.iq-join-row input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(code)});input.dispatchEvent(new Event('input',{bubbles:true}))})()`)
           await evaluate(`document.querySelector('.iq-join-row button').click()`)
           await waitFor(`!!document.querySelector('.iq-answers')`)
@@ -140,6 +148,7 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
           await waitFor(`!!document.querySelector('.iq-handoff')`);await fits(`IQ handoff at ${width}px`)
           await evaluate(`document.querySelector('.iq-handoff button').click()`)
           await waitFor(`!!document.querySelector('.iq-answers')`);await fits(`IQ question at ${width}px`)
+          assert.notEqual(await evaluate(`document.querySelector('.iq-question-card>h2').textContent`),guestState.question.question)
         }
       }
     }

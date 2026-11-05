@@ -1,4 +1,4 @@
-import { IQ_QUESTIONS } from './iq.js'
+import { IQ_QUESTIONS, selectIqQuestions, mergeIqHistory } from './iq.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { BLACK, LABELS, RED, applyMove, chooseAiMove, initialBoard, isInCheck, legalMoves, movesFor, notation } from './engine.js'
 import { BOARD_SIZE, EMPTY, X_PLAYER, O_PLAYER, createEmptyBoard, checkWinner, isBoardFull, findBestMove } from './caro.js'
@@ -159,10 +159,11 @@ function WolfHeader({onExit}){return <header className="wolf-header"><button onC
 
 const IQ_COLORS = ['#ffbc5c','#6ee7c8','#a9a7ff','#ff7f9f','#66b9ff','#e5d06e']
 
-function shuffleItems(items) {
-  const copy=[...items]
-  for(let i=copy.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[copy[i],copy[j]]=[copy[j],copy[i]]}
-  return copy
+function readIqHistory() {
+  try{return mergeIqHistory([],JSON.parse(localStorage.getItem('iq_seen_questions')||'[]'))}catch{return []}
+}
+function rememberIqQuestions(questions) {
+  try{localStorage.setItem('iq_seen_questions',JSON.stringify(mergeIqHistory(readIqHistory(),questions)))}catch{ /* A full or disabled store must not interrupt a game. */ }
 }
 
 function IqGame({onExit}) {
@@ -173,6 +174,7 @@ function IqGame({onExit}) {
 function OnlineIqGame({onExit,onModeChange}) {
   const [name,setName]=useState(()=>localStorage.getItem('iq_name')||'')
   const [joinCode,setJoinCode]=useState('')
+  const [entryMode,setEntryMode]=useState('create')
   const [questionCount,setQuestionCount]=useState(5)
   const [room,setRoom]=useState(null)
   const [connection,setConnection]=useState('idle')
@@ -197,12 +199,13 @@ function OnlineIqGame({onExit,onModeChange}) {
     const protocol=location.protocol==='https:'?'wss':'ws'
     const url=import.meta.env.VITE_WS_URL||(import.meta.env.DEV?`${protocol}://${location.hostname}:8080`:`${protocol}://${location.host}`)
     const socket=new WebSocket(url);socketRef.current=socket
-    socket.onopen=()=>socket.send(JSON.stringify({type,name:playerName,code,questionCount,reconnectToken:sessionStorage.getItem(`iq_token_${code}`)}))
+    socket.onopen=()=>socket.send(JSON.stringify({type,name:playerName,code,questionCount,reconnectToken:sessionStorage.getItem(`iq_token_${code}`),seenQuestions:readIqHistory()}))
     socket.onmessage=event=>{
       if(socketRef.current!==socket)return
       const data=JSON.parse(event.data)
       if(data.type==='iq_state'){
         sessionStorage.setItem(`iq_token_${data.code}`,data.you.reconnectToken)
+        if(data.question)rememberIqQuestions([data.question.key])
         serverOffset.current=data.serverTime-Date.now();setClock(Date.now())
         setRoom(data);setConnection('connected');setError('')
       }else if(data.type==='iq_error'){setError(data.message);setConnection(status=>status==='connecting'?'idle':status)}
@@ -234,8 +237,14 @@ function OnlineIqGame({onExit,onModeChange}) {
   const header=<header className="iq-header"><button onClick={onExit}><BackIcon/><span>Sảnh game</span></button><a href="#iq"><span>?</span><div><strong>ĐẤU TRÍ IQ</strong><small>Cùng câu hỏi, cùng so tài</small></div></a>{room?<button className="iq-switch-mode" onClick={disconnect}>Rời phòng</button>:<button className="iq-switch-mode" onClick={onModeChange}>Chơi cùng máy</button>}<div className="iq-header-tag">2–6 NGƯỜI · ONLINE</div></header>
 
   if(!room)return <main className="iq-shell">{header}<section className="iq-setup iq-online-entry">
-    <div className="iq-intro"><span className="iq-kicker">HẸN HỘI BẠN VÀO PHÒNG</span><h1>Cùng chơi.<br/><em>Cùng đấu trí.</em></h1><p>Tạo phòng, gửi mã cho bạn bè và trả lời cùng một câu hỏi trên thiết bị riêng. Đáp án được giữ kín đến khi mọi người hoàn thành hoặc hết giờ.</p><div className="iq-rules"><div><b>20</b><span>giây mỗi câu</span></div><div><b>200</b><span>điểm tối đa</span></div><div><b>2–6</b><span>người cùng phòng</span></div></div></div>
-    <div className="iq-setup-card iq-room-form"><span className="iq-card-label">ĐẤU TRÍ CÙNG BẠN BÈ</span><h2>Vào cuộc vui</h2><label>Tên của bạn<input value={name} onChange={e=>setName(e.target.value)} maxLength={20} placeholder="Nhập tên hiển thị" autoComplete="nickname"/></label><div className="iq-count"><span>SỐ CÂU KHI TẠO PHÒNG</span><div>{[5,10,15].map(count=><button key={count} className={questionCount===count?'active':''} aria-pressed={questionCount===count} onClick={()=>setQuestionCount(count)}><b>{count}</b> câu</button>)}</div></div><button className="iq-start" disabled={connection==='connecting'} onClick={()=>connect('iq_create')}>Tạo phòng mới <ArrowIcon/></button><div className="or-line"><span/>HOẶC THAM GIA PHÒNG<span/></div><label>Mã phòng<div className="iq-join-row"><input value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6))} maxLength={6} placeholder="ABC123" autoCapitalize="characters"/><button disabled={connection==='connecting'||joinCode.length!==6} onClick={()=>connect('iq_join',joinCode)}>Tham gia</button></div></label>{connection==='connecting'&&<p className="iq-room-note" role="status">Đang kết nối…</p>}{error&&<p className="iq-room-error" role="alert">{error}</p>}</div>
+    <div className="iq-intro"><span className="iq-kicker">MỖI VÁN, MỘT KHÁM PHÁ</span><h1>Bật trí tò mò.<br/><em>Rủ bạn so tài.</em></h1><p>Một chút logic, một chút quan sát và những cú “à ha” bất ngờ. Rủ hội bạn vào phòng, cùng thử xem ai nhanh trí hơn.</p><div className="iq-topic-preview"><span>◈ Logic</span><span>⌁ Suy luận số</span><span>▧ Không gian</span><span>⌘ Mật mã</span></div><p className="iq-bank-note">{IQ_QUESTIONS.length} câu hỏi · 10 chủ đề · Ưu tiên câu chưa chơi</p><div className="iq-rules"><div><b>20</b><span>giây mỗi câu</span></div><div><b>200</b><span>điểm tối đa</span></div><div><b>2–6</b><span>người cùng phòng</span></div></div></div>
+    <div className="iq-setup-card iq-room-form">
+      <span className="iq-card-label">HẸN NHAU MỘT VÁN</span><h2>{entryMode==='create'?'Tạo cuộc hẹn mới':'Nhập mã, nhập hội'}</h2><p className="iq-form-caption">Mỗi người một thiết bị. Cùng câu hỏi, cùng niềm vui.</p>
+      <div className="iq-entry-tabs" role="group" aria-label="Cách vào phòng"><button data-mode="create" aria-pressed={entryMode==='create'} onClick={()=>setEntryMode('create')}>Tạo phòng</button><button data-mode="join" aria-pressed={entryMode==='join'} onClick={()=>setEntryMode('join')}>Tham gia</button></div>
+      <label>Tên của bạn<input value={name} onChange={e=>setName(e.target.value)} maxLength={20} placeholder="Mọi người gọi bạn là gì?" autoComplete="nickname"/></label>
+      {entryMode==='create'?<><div className="iq-count"><span>CHỌN ĐỘ DÀI CUỘC VUI</span><div>{[5,10,15].map(count=><button key={count} className={questionCount===count?'active':''} aria-pressed={questionCount===count} onClick={()=>setQuestionCount(count)}><b>{count}</b> câu</button>)}</div></div><button className="iq-start" disabled={connection==='connecting'} onClick={()=>connect('iq_create')}>Tạo phòng & mời bạn <ArrowIcon/></button><p className="iq-room-note iq-form-footnote">2–6 người · Không cần tài khoản</p></>:<label className="iq-code-label">Mã từ bạn bè<div className="iq-join-row"><input value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6))} maxLength={6} placeholder="ABC123" autoCapitalize="characters"/><button disabled={connection==='connecting'||joinCode.length!==6} onClick={()=>connect('iq_join',joinCode)}>Vào phòng <ArrowIcon/></button></div></label>}
+      {connection==='connecting'&&<p className="iq-room-note" role="status">Đang kết nối…</p>}{error&&<p className="iq-room-error" role="alert">{error}</p>}
+    </div>
   </section></main>
 
   if(connection!=='connected')return <main className="iq-shell">{header}<section className="iq-final"><h1>Kết nối bị gián đoạn</h1><p>Ván chơi vẫn tiếp tục. Kết nối lại để trở về đúng chỗ và giữ điểm.</p><button className="iq-start" disabled={connection==='connecting'} onClick={()=>connect('iq_join',room.code)}>{connection==='connecting'?'Đang kết nối…':'Kết nối lại'}</button>{error&&<p className="iq-room-error" role="alert">{error}</p>}</section></main>
@@ -278,7 +287,8 @@ function LocalIqGame({onExit,onModeChange}) {
   function startGame(){
     const cleanNames=names.map((name,i)=>name.trim()||`Người chơi ${i+1}`)
     setPlayers(cleanNames.map((name,i)=>({id:`${Date.now()}-${i}`,name,color:IQ_COLORS[i],score:0,correct:0})))
-    setQuestions(shuffleItems(IQ_QUESTIONS).slice(0,questionCount))
+    const nextQuestions=selectIqQuestions(questionCount,readIqHistory())
+    rememberIqQuestions(nextQuestions.map(question=>question.id));setQuestions(nextQuestions)
     setQuestionIndex(0);setPlayerIndex(0);setStage('handoff');setTimeLeft(20);setSelected(null);setSubmissions([]);setPhase('playing')
   }
   function beginTurn(){setSelected(null);setTimeLeft(20);setStage('answer')}
@@ -315,7 +325,7 @@ function LocalIqGame({onExit,onModeChange}) {
     <header className="iq-header"><button onClick={onExit}><BackIcon/><span>Sảnh game</span></button><a href="#iq"><span>?</span><div><strong>ĐẤU TRÍ IQ</strong><small>Đánh thức bộ não thiên tài</small></div></a><button className="iq-switch-mode" onClick={onModeChange}>Chơi online</button><div className="iq-header-tag">2–6 NGƯỜI</div></header>
 
     {phase==='setup'&&<section className="iq-setup">
-      <div className="iq-intro"><span className="iq-kicker">ĐẤU TRƯỜNG TRÍ TUỆ</span><h1>Ai là bộ não<br/><em>xuất sắc nhất?</em></h1><p>Cùng nhau giải các câu đố logic, suy luận và tư duy nhanh. Mỗi người bí mật chọn đáp án trong lượt của mình, rồi cả nhóm xem kết quả sau mỗi câu.</p><div className="iq-rules"><div><b>20</b><span>giây mỗi lượt</span></div><div><b>200</b><span>điểm tối đa</span></div><div><b>6</b><span>người cùng chơi</span></div></div></div>
+      <div className="iq-intro"><span className="iq-kicker">ĐẤU TRƯỜNG TRÍ TUỆ</span><h1>Chuyền thiết bị.<br/><em>Chia sẻ niềm vui.</em></h1><p>Cùng nhau giải các câu đố logic, suy luận và tư duy nhanh. Mỗi người bí mật chọn đáp án trong lượt của mình, rồi cả nhóm xem kết quả sau mỗi câu.</p><div className="iq-rules"><div><b>20</b><span>giây mỗi lượt</span></div><div><b>200</b><span>điểm tối đa</span></div><div><b>6</b><span>người cùng chơi</span></div></div></div>
       <div className="iq-setup-card"><span className="iq-card-label">THIẾT LẬP VÒNG ĐẤU</span><h2>Triệu tập cao thủ</h2><div className="iq-name-list">{names.map((name,i)=><label key={i}><i style={{background:IQ_COLORS[i]}}>{i+1}</i><input value={name} onChange={e=>changeName(i,e.target.value)} aria-label={`Tên người chơi ${i+1}`}/>{names.length>2&&<button onClick={()=>removePlayer(i)} aria-label={`Xóa ${name}`}>×</button>}</label>)}</div>{names.length<6&&<button className="iq-add-player" onClick={addPlayer}>＋ Thêm người chơi</button>}<div className="iq-count"><span>SỐ CÂU TRONG MỘT VÒNG</span><div>{[5,10,15].map(count=><button className={questionCount===count?'active':''} onClick={()=>setQuestionCount(count)} key={count}><b>{count}</b> câu</button>)}</div></div><button className="iq-start" onClick={startGame}>Bắt đầu so tài <ArrowIcon/></button></div>
     </section>}
 

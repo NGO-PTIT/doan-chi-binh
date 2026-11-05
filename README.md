@@ -58,3 +58,8 @@ Cả phòng trả lời cùng một câu trong 20 giây. Mỗi đáp án chỉ �
 Mất kết nối có thể kết nối lại từ cùng tab, giữ chỗ và điểm bằng mã riêng lưu trong phiên trình duyệt. Đồng hồ vẫn chạy; người mất mạng không chặn cả phòng. Chủ phòng rời đi sẽ chuyển quyền cho người còn kết nối. Phòng đóng khi tất cả rời đi hoặc chủ phòng kết thúc phòng. Máy chủ khởi động lại sẽ mất các phòng đang chơi.
 
 Chọn **Chơi cùng máy** ở đầu trang IQ để dùng chế độ chuyền thiết bị như trước. Chế độ online cần chạy `npm run dev` khi phát triển, hoặc `npm run build` rồi `npm start` khi chạy bản build; `npm run dev:web` riêng chỉ phục vụ giao diện.
+
+
+IQ có 120 câu thuộc 10 nhóm: suy luận số, logic, toán ứng dụng, quan sát, mật mã, không gian, xác suất, ngôn ngữ, thời gian và tư duy nhanh. Mỗi ván ưu tiên câu chưa gặp và trộn chủ đề, đồng thời đảo thứ tự đáp án.
+
+Phòng ghi nhớ các câu đã chọn qua các ván; trình duyệt lưu các câu đã gặp để tránh lặp khi tạo hoặc vào phòng khác và khi chơi cùng máy. Khi đã dùng hết bộ câu, hệ thống dùng lại các câu gặp lâu nhất trước. Xóa dữ liệu trình duyệt sẽ đặt lại lịch sử cá nhân; nếu trình duyệt chặn lưu trữ, lịch sử trong phòng vẫn hoạt động.

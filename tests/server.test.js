@@ -194,7 +194,7 @@ async function startIq(peers){
   await Promise.all(peers.map(p=>p.wait(s=>s.phase==='question')))
 }
 const {IQ_QUESTIONS}=await import('../src/iq.js')
-const correctIq=state=>IQ_QUESTIONS.find(q=>q.question===state.question.question).correct
+const correctIq=state=>{const original=IQ_QUESTIONS.find(q=>q.question===state.question.question);return state.question.answers.indexOf(original.answers[original.correct])}
 
 test('IQ validates names, question counts, duplicate names and room capacity',async t=>{
   const invalid=await client(t)
@@ -284,6 +284,7 @@ test('IQ completes all questions and replay resets scores with new question ids'
   }
   await startIq(peers)
   assert.notEqual(host.state.question.id,firstId)
+  assert.equal(seen.has(host.state.question.question),false)
   assert.ok(host.state.players.every(p=>p.score===0&&p.correct===0&&!p.hasAnswered))
 })
 test('IQ reconnect uses a private token and host departure does not block the question',async t=>{
@@ -314,4 +315,30 @@ test('IQ closes rooms and clears abandoned rooms',async t=>{
   alone.ws.close();await once(alone.ws,'close')
   probe.last=null;probe.send({type:'iq_join',code:abandoned,name:'Probe'})
   await probe.wait((_,last)=>last?.type==='iq_error')
+})
+
+test('IQ combines player histories and avoids them when starting a new room',async t=>{
+  const host=await client(t),guest=await client(t)
+  const hostSeen=IQ_QUESTIONS.slice(0,55).map(q=>q.id),guestSeen=IQ_QUESTIONS.slice(55,110).map(q=>q.id)
+  host.send({type:'iq_create',name:'Returning host',questionCount:5,seenQuestions:hostSeen})
+  await host.wait(s=>s?.type==='iq_state')
+  guest.send({type:'iq_join',code:host.state.code,name:'Returning guest',seenQuestions:guestSeen})
+  await guest.wait(s=>s?.type==='iq_state')
+  await startIq([host,guest])
+  const seen=new Set([...hostSeen,...guestSeen])
+  for(let index=0;index<5;index++){
+    assert.equal(seen.has(host.state.question.key),false)
+    seen.add(host.state.question.key)
+    for(const peer of [host,guest])peer.send({type:'iq_answer',questionId:host.state.question.id,answer:correctIq(host.state)})
+    await host.wait(s=>s.phase==='reveal'&&s.index===index)
+    host.send({type:'iq_next',questionId:host.state.question.id})
+    await Promise.all([host,guest].map(p=>p.wait(s=>index===4?s.phase==='finished':s.phase==='question'&&s.index===index+1)))
+  }
+})
+test('IQ accepts a full bank history and malformed history cannot crash room creation',async t=>{
+  for(const history of [IQ_QUESTIONS.map(q=>q.id),{toString:1},[{},null,100,'unknown']]){
+    const host=await client(t)
+    host.send({type:'iq_create',name:'History check',seenQuestions:history})
+    await host.wait(s=>s?.phase==='lobby')
+  }
 })

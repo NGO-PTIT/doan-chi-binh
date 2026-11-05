@@ -1,4 +1,4 @@
-import { IQ_QUESTIONS } from './src/iq.js'
+import { selectIqQuestions, mergeIqHistory } from './src/iq.js'
 import http from 'node:http'
 import { randomUUID, randomInt } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
@@ -46,8 +46,8 @@ wss.on('connection',socket=>{
     let data
     try { data=JSON.parse(raw) } catch { return send(socket,{type:'error',message:'Dữ liệu không hợp lệ'}) }
     if (!data||typeof data!=='object'||Array.isArray(data)||typeof data.type!=='string') return send(socket,{type:'error',message:'Dữ liệu không hợp lệ'})
-    if (data.type==='iq_create') return createIqRoom(socket,data.name,data.questionCount)
-    if (data.type==='iq_join') return joinIqRoom(socket,typeof data.code==='string'?data.code.toUpperCase().trim():'',data.name,data.reconnectToken)
+    if (data.type==='iq_create') return createIqRoom(socket,data.name,data.questionCount,data.seenQuestions)
+    if (data.type==='iq_join') return joinIqRoom(socket,typeof data.code==='string'?data.code.toUpperCase().trim():'',data.name,data.reconnectToken,data.seenQuestions)
     if (data.type==='iq_start') return startIqGame(socket)
     if (data.type==='iq_answer') return answerIq(socket,data.questionId,data.answer)
     if (data.type==='iq_next') return nextIqQuestion(socket,data.questionId)
@@ -442,7 +442,7 @@ function broadcastWolf(room) {
   }
 }
 
-function createIqRoom(socket,nameValue,questionCount=5) {
+function createIqRoom(socket,nameValue,questionCount=5,seenQuestions=[]) {
   const name=cleanName(nameValue)
   if(!name)return send(socket,{type:'iq_error',message:'Hãy nhập tên của bạn'})
   if(![5,10,15].includes(questionCount))return send(socket,{type:'iq_error',message:'Chọn 5, 10 hoặc 15 câu'})
@@ -450,10 +450,10 @@ function createIqRoom(socket,nameValue,questionCount=5) {
   let code
   do {code=randomCode()}while(rooms.has(code)||caroRooms.has(code)||wolfRooms.has(code)||iqRooms.has(code))
   const player={id:randomUUID(),reconnectToken:randomUUID(),name,socket,connected:true,host:true,score:0,correct:0,answer:null,points:0}
-  const room={code,phase:'lobby',players:[player],questionCount,questions:[],index:0,deadline:null,timer:null}
+  const room={code,phase:'lobby',players:[player],questionCount,seenQuestions:mergeIqHistory([],seenQuestions),questions:[],index:0,deadline:null,timer:null}
   iqRooms.set(code,room);clients.set(socket,{game:'iq',code,id:player.id});broadcastIq(room)
 }
-function joinIqRoom(socket,code,nameValue,reconnectToken) {
+function joinIqRoom(socket,code,nameValue,reconnectToken,seenQuestions=[]) {
   const room=iqRooms.get(code),name=cleanName(nameValue)
   if(!room)return send(socket,{type:'iq_error',message:'Không tìm thấy phòng này'})
   if(!name)return send(socket,{type:'iq_error',message:'Hãy nhập tên của bạn'})
@@ -467,6 +467,7 @@ function joinIqRoom(socket,code,nameValue,reconnectToken) {
     player={id:randomUUID(),reconnectToken:randomUUID(),name,socket,connected:true,host:false,score:0,correct:0,answer:null,points:0}
     room.players.push(player)
   }
+  room.seenQuestions=mergeIqHistory(room.seenQuestions,seenQuestions)
   leaveRoom(socket);player.socket=socket;player.connected=true;clients.set(socket,{game:'iq',code,id:player.id});broadcastIq(room)
 }
 function startIqGame(socket) {
@@ -475,9 +476,8 @@ function startIqGame(socket) {
   const connected=room.players.filter(p=>p.connected)
   if(connected.length<2)return send(socket,{type:'iq_error',message:'Cần ít nhất 2 người để bắt đầu'})
   room.players=connected
-  room.questions=[...IQ_QUESTIONS]
-  for(let i=room.questions.length-1;i>0;i--){const j=randomInt(i+1);[room.questions[i],room.questions[j]]=[room.questions[j],room.questions[i]]}
-  room.questions=room.questions.slice(0,room.questionCount);room.index=0
+  room.questions=selectIqQuestions(room.questionCount,room.seenQuestions,randomInt)
+  room.seenQuestions=mergeIqHistory(room.seenQuestions,room.questions.map(question=>question.id));room.index=0
   room.players.forEach(p=>{p.score=0;p.correct=0})
   beginIqQuestion(room)
 }
@@ -532,7 +532,7 @@ function endIqRoom(socket) {
 }
 function broadcastIq(room) {
   const question=room.questions[room.index],revealed=['reveal','finished'].includes(room.phase)
-  const publicQuestion=question?{id:room.questionId,category:question.category,question:question.question,answers:question.answers,...(revealed?{correct:question.correct,explanation:question.explanation}:{})}:null
+  const publicQuestion=question?{id:room.questionId,key:question.id,category:question.category,question:question.question,answers:question.answers,...(revealed?{correct:question.correct,explanation:question.explanation}:{})}:null
   const players=room.players.map(p=>({id:p.id,name:p.name,host:p.host,connected:p.connected,score:p.score,correct:p.correct,hasAnswered:p.answer!==null,...(revealed?{answer:p.answer,points:p.points}:{})}))
   for(const p of room.players)if(p.connected)send(p.socket,{type:'iq_state',code:room.code,phase:room.phase,index:room.index,questionCount:room.questionCount,deadline:room.deadline,serverTime:Date.now(),question:publicQuestion,players,you:{id:p.id,name:p.name,host:p.host,reconnectToken:p.reconnectToken,answer:p.answer}})
 }
