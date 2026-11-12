@@ -2,10 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {IQ_QUESTIONS,IQ_CATEGORIES,selectIqQuestions,mergeIqHistory} from '../src/iq.js'
 
-test('IQ bank contains 144 unique, complete questions across six balanced disciplines',()=>{
-  assert.equal(IQ_QUESTIONS.length,144)
-  assert.equal(new Set(IQ_QUESTIONS.map(q=>q.id)).size,144)
-  assert.equal(new Set(IQ_QUESTIONS.map(q=>q.question)).size,144)
+test('IQ bank contains 168 unique, complete questions across seven school subjects',()=>{
+  assert.equal(IQ_QUESTIONS.length,168)
+  assert.equal(new Set(IQ_QUESTIONS.map(q=>q.id)).size,168)
+  assert.equal(new Set(IQ_QUESTIONS.map(q=>q.question)).size,168)
   const groups=new Map()
   for(const q of IQ_QUESTIONS){
     assert.equal(q.answers.length,4,q.question)
@@ -14,8 +14,8 @@ test('IQ bank contains 144 unique, complete questions across six balanced discip
     assert.ok(q.explanation.trim().length>0&&q.answers.every(answer=>answer.trim().length>0))
     groups.set(q.category,(groups.get(q.category)||0)+1)
   }
-  assert.deepEqual(new Set(IQ_CATEGORIES),new Set(['Toán học','Logic','Địa lý','Lịch sử','Văn học','Văn hóa']))
-  assert.equal(groups.size,6)
+  assert.deepEqual(new Set(IQ_CATEGORIES),new Set(['Toán học','Vật lý','Hóa học','Ngữ văn','Lịch sử','Địa lý','Sinh học']))
+  assert.equal(groups.size,7)
   assert.ok([...groups.values()].every(count=>count===24))
 })
 test('a round mixes topics and shuffles options without changing the correct answer or bank',()=>{
@@ -23,7 +23,7 @@ test('a round mixes topics and shuffles options without changing the correct ans
   for(const count of [5,10,15]){
     const questions=selectIqQuestions(count,[],()=>0),groups=new Map()
     assert.equal(new Set(questions.map(q=>q.id)).size,count)
-    assert.equal(new Set(questions.map(q=>q.category)).size,Math.min(count,6))
+    assert.equal(new Set(questions.map(q=>q.category)).size,Math.min(count,7))
     for(const q of questions){
       const original=IQ_QUESTIONS.find(item=>item.id===q.id)
       assert.equal(q.answers[q.correct],original.answers[original.correct])
@@ -41,7 +41,7 @@ test('rounds exhaust the bank before repeats and keep repeated topics balanced',
     assert.ok(questions.every(question=>!history.includes(question.id)))
     history=mergeIqHistory(history,questions.map(q=>q.id))
   }
-  assert.equal(history.length,144)
+  assert.equal(history.length,168)
   const next=selectIqQuestions(15,history)
   const counts=IQ_CATEGORIES.map(category=>next.filter(q=>q.category===category).length)
   assert.ok(Math.max(...counts)-Math.min(...counts)<=1)
@@ -60,37 +60,74 @@ test('near exhaustion, fresh questions come first and a batch never repeats itse
 })
 test('history accepts only valid ids, keeps the most recent order, and fits a WebSocket command',()=>{
   assert.deepEqual(mergeIqHistory(null,{}),[])
-  assert.deepEqual(mergeIqHistory(['iq-1','iq-2','bad'],['iq-1',null,{},'iq-3']),['iq-2','iq-1','iq-3'])
+  assert.deepEqual(mergeIqHistory(['advanced-1','advanced-2','bad'],['advanced-1',null,{},'advanced-3']),['advanced-2','advanced-1','advanced-3'])
   const history=mergeIqHistory([],[...IQ_QUESTIONS.map(q=>q.id),...Array(2000).fill('unknown')])
-  assert.equal(history.length,144)
+  assert.equal(history.length,168)
   assert.ok(Buffer.byteLength(JSON.stringify({type:'iq_create',name:'Player',seenQuestions:history}))<16000)
   assert.equal(selectIqQuestions(5,['unknown',null,{}]).length,5)
   assert.throws(()=>selectIqQuestions(IQ_QUESTIONS.length+1),RangeError)
 })
 
-test('revised deduction puzzles have exactly one valid solution',()=>{
-  const answer=id=>{const q=IQ_QUESTIONS.find(q=>q.id===id);return q.answers[q.correct]}
-  const boxes=['A','B','C'].filter(treasure=>[treasure==='A',treasure!=='B',treasure!=='A'].filter(Boolean).length===1)
-  assert.deepEqual(boxes,['B'])
-  assert.equal(answer('iq-40'),`Hộp ${boxes[0]}`)
-  const suspects=['An','Bình','Chi'].filter(guilty=>[guilty!=='An',guilty==='An',guilty!=='Bình'].filter(Boolean).length===1)
-  assert.deepEqual(suspects,['Bình'])
-  assert.equal(answer('iq-41'),suspects[0])
+const answer=(category,index)=>{
+  const question=IQ_QUESTIONS.filter(q=>q.category===category)[index-1]
+  return question.answers[question.correct]
+}
+
+test('advanced probability and counting answers match independent enumeration',()=>{
+  const permutations=values=>values.length?values.flatMap((v,i)=>permutations(values.filter((_,j)=>i!==j)).map(rest=>[v,...rest])):[[]]
+  const arrangements=permutations([0,1,2,3])
+  const derangements=arrangements.filter(order=>order.every((value,index)=>value!==index)).length
+  assert.equal(answer('Toán học',8),`${derangements/3}/${arrangements.length/3}`)
+  const evenTotals=[],doubles=[]
+  for(let a=1;a<=6;a++)for(let b=1;b<=6;b++)if((a+b)%2===0){evenTotals.push([a,b]);if(a===b)doubles.push([a,b])}
+  assert.equal(answer('Toán học',3),`${doubles.length/6}/${evenTotals.length/6}`)
+  const numbers=Array.from({length:9000},(_,i)=>i+1000).filter(n=>n%5===0&&[...String(n)].every(c=>Number(c)<=5)&&new Set(String(n)).size===4)
+  assert.equal(Number(answer('Toán học',7)),numbers.length)
+  const exactlyOne=Array.from({length:100},(_,i)=>i+1).filter(n=>(n%3===0)!==(n%5===0))
+  assert.equal(Number(answer('Toán học',22)),exactlyOne.length)
+  let oneFace=0
+  for(let x=0;x<4;x++)for(let y=0;y<4;y++)for(let z=0;z<4;z++)if([x,y,z].filter(v=>v===0||v===3).length===1)oneFace++
+  assert.equal(Number(answer('Toán học',21)),oneFace)
+  const groups=[]
+  for(let mask=0;mask<1024;mask++){
+    const selected=Array.from({length:10},(_,i)=>i).filter(i=>mask&(1<<i))
+    if(selected.length===5&&selected.filter(i=>i>=6).length===2)groups.push(selected)
+  }
+  assert.equal(Number(answer('Toán học',5)),groups.length)
+  const remainder=Array.from({length:105},(_,i)=>i+1).find(n=>n%3===2&&n%5===3&&n%7===2)
+  assert.equal(Number(answer('Toán học',16)),remainder)
 })
-test('revised probability, clock, code and spatial answers match independent calculations',()=>{
-  const answer=id=>{const q=IQ_QUESTIONS.find(q=>q.id===id);return q.answers[q.correct]}
-  let redPairs=0,pairs=0
-  for(let a=0;a<5;a++)for(let b=a+1;b<5;b++){pairs++;if(a<3&&b<3)redPairs++}
-  assert.equal(answer('iq-88'),`${redPairs}/${pairs}`)
-  const twoHeads=Array.from({length:8},(_,mask)=>mask.toString(2).split('').filter(bit=>bit==='1').length).filter(count=>count===2).length
-  assert.equal(answer('iq-89'),`${twoHeads}/8`)
-  assert.equal(answer('iq-117'),`${Math.abs(3.5*30-30*6)}°`)
-  assert.equal(answer('iq-33'),`${10/(6-1)*(12-1)} giây`)
-  const shifted=[...'YAZ'].map(char=>String.fromCharCode(65+(char.charCodeAt(0)-65+2)%26)).join('')
-  assert.equal(answer('iq-64'),shifted)
-  let paintedOnTwoFaces=0
-  for(let x=0;x<3;x++)for(let y=0;y<3;y++)for(let z=0;z<3;z++)if([x,y,z].filter(value=>value===0||value===2).length===2)paintedOnTwoFaces++
-  assert.equal(Number(answer('iq-76')),paintedOnTwoFaces)
-  const date=new Date(Date.UTC(2025,1,20));date.setUTCDate(date.getUTCDate()+10)
-  assert.equal(answer('iq-119'),`${date.getUTCDate()}/${date.getUTCMonth()+1}`)
+
+test('subject selection stays in the chosen bank before and after exhaustion',()=>{
+  for(const subject of IQ_CATEGORIES){
+    const bank=IQ_QUESTIONS.filter(q=>q.category===subject)
+    const others=IQ_QUESTIONS.filter(q=>q.category!==subject).map(q=>q.id)
+    const first=selectIqQuestions(15,others,()=>0,subject)
+    const history=mergeIqHistory(others,first.map(q=>q.id))
+    const second=selectIqQuestions(15,history,()=>0,subject)
+    assert.ok([...first,...second].every(q=>q.category===subject))
+    assert.equal(new Set(second.map(q=>q.id)).size,15)
+    assert.equal(second.filter(q=>!history.includes(q.id)).length,9)
+    assert.ok(second.slice(0,9).every(q=>!history.includes(q.id)))
+    const repeated=selectIqQuestions(15,bank.map(q=>q.id),()=>0,subject)
+    assert.deepEqual(repeated.map(q=>q.id),bank.slice(0,15).map(q=>q.id))
+  }
+  for(const subject of ['Logic','Văn hóa','unknown',null,{},[]])assert.throws(()=>selectIqQuestions(5,[],()=>0,subject),RangeError)
+  assert.throws(()=>selectIqQuestions(25,[],()=>0,'Vật lý'),RangeError)
+})
+
+test('science numerical answers agree with independent calculations',()=>{
+  assert.equal(answer('Vật lý',20),`Cách kính ${(1/(1/10-1/15)).toFixed(0)} cm phía bên kia`)
+  assert.equal(answer('Vật lý',24),`1/${2**3}`)
+  assert.equal(answer('Hóa học',10),`${(0.2/2*64).toFixed(1).replace('.',',')} g`)
+  const pH=14+Math.log10((0.1*0.2-0.1*0.1)/(0.1+0.1))
+  assert.equal(answer('Hóa học',5),pH.toFixed(2).replace('.',','))
+  assert.equal(answer('Sinh học',4),(2*0.3*0.7).toFixed(2).replace('.',','))
+  assert.equal(answer('Sinh học',10),String(2*8))
+})
+
+test('replaced content is fresh even for players who exhausted the old bank',()=>{
+  const previous=[...Array.from({length:120},(_,i)=>`iq-${i+1}`),...Array.from({length:4},(_,c)=>Array.from({length:24},(_,i)=>`knowledge-${c+1}-${i+1}`)).flat()]
+  assert.deepEqual(mergeIqHistory([],previous),[])
+  assert.equal(selectIqQuestions(15,previous).length,15)
 })

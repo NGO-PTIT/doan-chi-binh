@@ -46,7 +46,7 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
     }
     async function waitFor(expression){
       for(let i=0;i<100;i++){if(await evaluate(expression))return;await delay(25)}
-      assert.fail(`Page did not become ready: ${expression}`)
+      assert.fail(`Page did not become ready: ${expression}; ${await evaluate("document.body.innerText")}`)
     }
     async function fits(label){
       const layout=await evaluate(`(()=>{
@@ -95,6 +95,9 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
           await writeFile(path.join(tmpdir(),`xiangqi-caro-${width}.png`),Buffer.from(screenshot.data,'base64'))
         }
         if(route==='iq'){
+          assert.deepEqual(await evaluate(`[...document.querySelectorAll('.iq-subject-fields select')[0].options].map(o=>o.textContent)`),['Môn học'])
+          assert.equal(await evaluate(`document.querySelectorAll('.iq-subject-fields select')[1].options.length`),8)
+          await evaluate(`(()=>{const select=document.querySelectorAll('.iq-subject-fields select')[1];select.value='Vật lý';select.dispatchEvent(new Event('change',{bubbles:true}))})()`)
           const entryShot=await call('Page.captureScreenshot',{format:'png'})
           await writeFile(path.join(tmpdir(),`xiangqi-iq-entry-${width}.png`),Buffer.from(entryShot.data,'base64'))
           await evaluate(`(()=>{const input=document.querySelector('.iq-room-form>label input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Browser host');input.dispatchEvent(new Event('input',{bubbles:true}))})()`)
@@ -115,6 +118,8 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
           await writeFile(path.join(tmpdir(),`xiangqi-iq-question-${width}.png`),Buffer.from(questionShot.data,'base64'))
           for(let i=0;i<100&&guestState?.phase!=='question';i++)await delay(25)
           assert.equal(guestState?.phase,'question')
+          assert.equal(guestState.subject,'Vật lý')
+          assert.equal(guestState.question.category,'Vật lý')
           assert.ok((await evaluate(`JSON.parse(localStorage.getItem('iq_seen_questions'))`)).includes(guestState.question.key))
           const original=IQ_QUESTIONS.find(q=>q.question===guestState.question.question)
           const correct=guestState.question.answers.indexOf(original.answers[original.correct])
@@ -132,9 +137,12 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
           // Leave and rejoin through the actual room-code form; the private token restores the seat.
           await evaluate(`document.querySelector('.iq-switch-mode').click()`)
           await waitFor(`!!document.querySelector('.iq-room-form')`)
+          for(let i=0;i<100&&guestState.players.find(player=>player.name==='Browser host')?.connected;i++)await delay(25)
+          assert.equal(guestState.players.find(player=>player.name==='Browser host')?.connected,false)
           await evaluate(`document.querySelector('.iq-entry-tabs button[data-mode="join"]').click()`)
           await waitFor(`!!document.querySelector('.iq-join-row input')`)
           await evaluate(`(()=>{const input=document.querySelector('.iq-join-row input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(code)});input.dispatchEvent(new Event('input',{bubbles:true}))})()`)
+          await waitFor(`!document.querySelector('.iq-join-row button').disabled`)
           await evaluate(`document.querySelector('.iq-join-row button').click()`)
           await waitFor(`!!document.querySelector('.iq-answers')`)
           await fits(`IQ rejoined question at ${width}px`)
@@ -144,10 +152,11 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
           await evaluate(`document.querySelector('.iq-switch-mode').click()`)
 
           await waitFor(`!!document.querySelector('.iq-name-list')`)
+          await evaluate(`(()=>{const select=document.querySelectorAll('.iq-subject-fields select')[1];select.value='Hóa học';select.dispatchEvent(new Event('change',{bubbles:true}))})()`)
           await evaluate(`document.querySelector('.iq-start').click()`)
           await waitFor(`!!document.querySelector('.iq-handoff')`);await fits(`IQ handoff at ${width}px`)
           await evaluate(`document.querySelector('.iq-handoff button').click()`)
-          await waitFor(`!!document.querySelector('.iq-answers')`);await fits(`IQ question at ${width}px`)
+          await waitFor(`!!document.querySelector('.iq-answers')`);assert.equal(await evaluate(`document.querySelector('.iq-question-top>span').textContent`),'Hóa học');await fits(`IQ question at ${width}px`)
           assert.notEqual(await evaluate(`document.querySelector('.iq-question-card>h2').textContent`),guestState.question.question)
         }
       }

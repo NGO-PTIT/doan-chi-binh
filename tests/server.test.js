@@ -198,7 +198,7 @@ const correctIq=state=>{const original=IQ_QUESTIONS.find(q=>q.question===state.q
 
 test('IQ validates names, question counts, duplicate names and room capacity',async t=>{
   const invalid=await client(t)
-  for(const payload of [{name:''},{name:{}},{name:'Name',questionCount:3},{name:'Name',questionCount:'5'}]){
+  for(const payload of [{name:''},{name:{}},{name:'Name',questionCount:3},{name:'Name',questionCount:'5'},{name:'Name',subject:'Logic'},{name:'Name',subject:{}},{name:'Name',subject:null},{name:'Name',field:'culture'},{name:'Name',field:[]}]){
     invalid.last=null;invalid.send({type:'iq_create',...payload})
     await invalid.wait((_,last)=>last?.type==='iq_error')
     assert.equal(invalid.state,null)
@@ -341,4 +341,27 @@ test('IQ accepts a full bank history and malformed history cannot crash room cre
     host.send({type:'iq_create',name:'History check',seenQuestions:history})
     await host.wait(s=>s?.phase==='lobby')
   }
+})
+
+
+test('IQ fixes the selected school subject for everyone and keeps it on replay',async t=>{
+  const host=await client(t),guest=await client(t)
+  host.send({type:'iq_create',name:'Physics host',field:'school',subject:'Vật lý',questionCount:5,seenQuestions:IQ_QUESTIONS.map(q=>q.id)})
+  await host.wait(s=>s?.phase==='lobby')
+  assert.equal(host.state.subject,'Vật lý')
+  assert.equal(host.state.field,'school')
+  guest.send({type:'iq_join',code:host.state.code,name:'Guest',subject:'Hóa học'})
+  await guest.wait(s=>s?.phase==='lobby')
+  assert.equal(guest.state.subject,'Vật lý')
+  await startIq([host,guest])
+  for(let index=0;index<5;index++){
+    assert.equal(host.state.question.category,'Vật lý')
+    for(const peer of [host,guest])peer.send({type:'iq_answer',questionId:host.state.question.id,answer:correctIq(host.state)})
+    await Promise.all([host,guest].map(peer=>peer.wait(s=>s.phase==='reveal'&&s.index===index)))
+    host.send({type:'iq_next',questionId:host.state.question.id})
+    await Promise.all([host,guest].map(peer=>peer.wait(s=>index===4?s.phase==='finished':s.phase==='question'&&s.index===index+1)))
+  }
+  await startIq([host,guest])
+  assert.equal(host.state.subject,'Vật lý')
+  assert.equal(guest.state.question.category,'Vật lý')
 })
