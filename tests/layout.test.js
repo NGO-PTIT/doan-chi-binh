@@ -8,7 +8,7 @@ import path from 'node:path'
 import {setTimeout as delay} from 'node:timers/promises'
 import {createServer} from 'vite'
 import WebSocket from 'ws'
-import {IQ_QUESTIONS} from '../src/iq.js'
+import {IQ_QUESTIONS,IQ_CATEGORIES} from '../src/iq.js'
 
 test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay square',{timeout:60000},async t=>{
   const profile=await mkdtemp(path.join(tmpdir(),'xiangqi-layout-'))
@@ -59,6 +59,34 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
       assert.ok(layout.scrollWidth<=layout.width+1,`${label} overflows: ${JSON.stringify(layout)}`)
       assert.deepEqual(layout.outside,[],`${label} has controls outside the viewport`)
     }
+    async function readable(selector,pseudo=null){
+      const colors=await evaluate(`(()=>{
+        const el=document.querySelector(${JSON.stringify(selector)}),style=getComputedStyle(el,${JSON.stringify(pseudo)});
+        let parent=el,background=getComputedStyle(parent).backgroundColor;
+        while(background==='rgba(0, 0, 0, 0)'&&parent.parentElement){parent=parent.parentElement;background=getComputedStyle(parent).backgroundColor}
+        return {text:style.color,background};
+      })()`)
+      const luminance=color=>{
+        const channels=color.match(/[\d.]+/g).slice(0,3).map(value=>Number(value)/255).map(value=>value<=0.04045?value/12.92:((value+0.055)/1.055)**2.4)
+        return channels.reduce((sum,value,i)=>sum+value*[0.2126,0.7152,0.0722][i],0)
+      }
+      const [low,high]=[luminance(colors.text),luminance(colors.background)].sort((a,b)=>a-b)
+      assert.ok((high+0.05)/(low+0.05)>=4.5,`${selector} needs readable text contrast: ${JSON.stringify(colors)}`)
+    }
+    async function timedControls(label){
+      const layout=await evaluate(`(()=>{
+        const card=document.querySelector('.iq-question-card.is-answering');
+        const content=card.querySelector('.iq-question-content');
+        const rect=selector=>{const r=card.querySelector(selector).getBoundingClientRect();return {top:r.top,bottom:r.bottom}};
+        const before={timer:rect('.iq-question-top'),submit:rect('.iq-lock')};
+        content.scrollTop=content.scrollHeight;
+        return {height:innerHeight,before,after:{timer:rect('.iq-question-top'),submit:rect('.iq-lock')},scrollable:content.scrollHeight>content.clientHeight};
+      })()`)
+      for(const rect of Object.values(layout.after))assert.ok(rect.top>=0&&rect.bottom<=layout.height,`${label}: timed controls must stay visible: ${JSON.stringify(layout)}`)
+      assert.deepEqual(layout.before,layout.after,`${label}: scrolling answers must not move timed controls`)
+      await evaluate(`document.querySelector('.iq-question-content').scrollTop=0`)
+      return layout
+    }
     async function squares(label){
       const dimensions=await evaluate(`(()=>{
         const board=document.querySelector('.caro-board').getBoundingClientRect();
@@ -76,7 +104,7 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
     }
     await call('Page.enable');await call('Runtime.enable')
     for(const width of [360,768,1024,1280]){
-      await call('Emulation.setDeviceMetricsOverride',{width,height:960,deviceScaleFactor:1,mobile:false})
+      await call('Emulation.setDeviceMetricsOverride',{width,height:width===360?800:960,deviceScaleFactor:1,mobile:false})
       for(const [route,selector]of [['caro','.caro-board'],['xiangqi','.board'],['werewolf','.online-entry-card'],['iq','.iq-setup'],['','.hub-hero']]){
         await call('Page.navigate',{url:`http://127.0.0.1:${vite.httpServer.address().port}/?layout=${width}-${route}#${route}`})
         await waitFor(`!!document.querySelector(${JSON.stringify(selector)})`)
@@ -97,6 +125,12 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
         if(route==='iq'){
           assert.deepEqual(await evaluate(`[...document.querySelectorAll('.iq-subject-fields select')[0].options].map(o=>o.textContent)`),['Môn học'])
           assert.equal(await evaluate(`document.querySelectorAll('.iq-subject-fields select')[1].options.length`),8)
+          assert.equal(await evaluate(`document.querySelector('.iq-header strong').textContent`),'ĐẤU KIẾN THỨC')
+          assert.equal(await evaluate(`document.querySelector('.iq-switch-mode').textContent`),'Chơi chung thiết bị')
+          for(const selector of ['.iq-form-caption','.iq-bank-note','.iq-entry-tabs button[aria-pressed=false]'])await readable(selector)
+          await readable('.iq-room-form input','::placeholder')
+          if(width===1280)await readable('.iq-header-tag')
+          if(width===360)assert.ok(await evaluate(`document.querySelector('.iq-room-form input').getBoundingClientRect().bottom<innerHeight`),'name input should be visible before scrolling')
           await evaluate(`(()=>{const select=document.querySelectorAll('.iq-subject-fields select')[1];select.value='Vật lý';select.dispatchEvent(new Event('change',{bubbles:true}))})()`)
           const entryShot=await call('Page.captureScreenshot',{format:'png'})
           await writeFile(path.join(tmpdir(),`xiangqi-iq-entry-${width}.png`),Buffer.from(entryShot.data,'base64'))
@@ -114,17 +148,22 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
           await evaluate(`document.querySelector('.iq-room-lobby .iq-start').click()`)
           await waitFor(`!!document.querySelector('.iq-answers')`)
           await fits(`IQ online question at ${width}px`)
+          await timedControls(`online at ${width}px`)
+          await readable('.iq-side-title>small')
           const questionShot=await call('Page.captureScreenshot',{format:'png'})
           await writeFile(path.join(tmpdir(),`xiangqi-iq-question-${width}.png`),Buffer.from(questionShot.data,'base64'))
           for(let i=0;i<100&&guestState?.phase!=='question';i++)await delay(25)
           assert.equal(guestState?.phase,'question')
           assert.equal(guestState.subject,'Vật lý')
           assert.equal(guestState.question.category,'Vật lý')
+          assert.equal(await evaluate(`document.querySelector('.iq-curriculum').textContent`),`Lớp ${guestState.question.grade} · ${guestState.question.topic}`)
           assert.ok((await evaluate(`JSON.parse(localStorage.getItem('iq_seen_questions'))`)).includes(guestState.question.key))
           const original=IQ_QUESTIONS.find(q=>q.question===guestState.question.question)
           const correct=guestState.question.answers.indexOf(original.answers[original.correct])
           await evaluate(`document.querySelectorAll('.iq-answers button')[${correct}].click()`)
           await waitFor(`!document.querySelector('.iq-lock').disabled`)
+          assert.equal(await evaluate(`document.querySelectorAll('.iq-answers button')[${correct}].getAttribute('aria-pressed')`),'true')
+          assert.equal(await evaluate(`document.querySelectorAll('.iq-answers button')[${correct}].querySelector('i').textContent`),'✓')
           await evaluate(`document.querySelector('.iq-lock').click()`)
           await waitFor(`!document.querySelector('.iq-lock')`)
           guest.send(JSON.stringify({type:'iq_answer',questionId:guestState.question.id,answer:correct}))
@@ -156,8 +195,45 @@ test('browser layouts fit desktop, tablet and mobile; occupied Caro cells stay s
           await evaluate(`document.querySelector('.iq-start').click()`)
           await waitFor(`!!document.querySelector('.iq-handoff')`);await fits(`IQ handoff at ${width}px`)
           await evaluate(`document.querySelector('.iq-handoff button').click()`)
-          await waitFor(`!!document.querySelector('.iq-answers')`);assert.equal(await evaluate(`document.querySelector('.iq-question-top>span').textContent`),'Hóa học');await fits(`IQ question at ${width}px`)
-          assert.notEqual(await evaluate(`document.querySelector('.iq-question-card>h2').textContent`),guestState.question.question)
+          await waitFor(`!!document.querySelector('.iq-answers')`);assert.equal(await evaluate(`document.querySelector('.iq-question-top>span').textContent`),'Hóa học');assert.match(await evaluate(`document.querySelector('.iq-curriculum').textContent`),/^Lớp (10|11|12) · /);await fits(`IQ question at ${width}px`)
+          assert.notEqual(await evaluate(`document.querySelector('.iq-question-content>h2').textContent`),guestState.question.question)
+        }
+      }
+    }
+    // Use the actual longest question in every subject, rather than a short random fixture.
+    for(const [width,height]of [[360,640],[640,360]]){
+      await call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false})
+      for(const subject of IQ_CATEGORIES){
+        const longest=IQ_QUESTIONS.filter(q=>q.category===subject).sort((a,b)=>(b.question.length+b.answers.join('').length)-(a.question.length+a.answers.join('').length))[0]
+        const query=`?long=${width}-${encodeURIComponent(subject)}`
+        await call('Page.navigate',{url:`http://127.0.0.1:${vite.httpServer.address().port}/${query}#iq`})
+        await waitFor(`location.search===${JSON.stringify(query)}&&!!document.querySelector('.iq-room-form')`)
+        await evaluate(`localStorage.setItem('iq_seen_questions',${JSON.stringify(JSON.stringify(IQ_QUESTIONS.filter(q=>q.id!==longest.id).map(q=>q.id)))})`)
+        await evaluate(`document.querySelector('.iq-switch-mode').click()`)
+        await waitFor(`!!document.querySelector('.iq-name-list')`)
+        await evaluate(`(()=>{const select=document.querySelectorAll('.iq-subject-fields select')[1];select.value=${JSON.stringify(subject)};select.dispatchEvent(new Event('change',{bubbles:true}))})()`)
+        await waitFor(`document.querySelectorAll('.iq-subject-fields select')[1].value===${JSON.stringify(subject)}`)
+        await evaluate(`document.querySelector('.iq-start').click()`)
+        await waitFor(`!!document.querySelector('.iq-handoff')`)
+        // Arriving from a scrolled setup must still put the timed controls in view.
+        await evaluate(`window.scrollTo(0,document.body.scrollHeight);document.querySelector('.iq-handoff button').click()`)
+        await waitFor(`!!document.querySelector('.iq-answers')`)
+        assert.equal(await evaluate(`document.querySelector('.iq-question-content>h2').textContent`),longest.question)
+        const layout=await timedControls(`${subject} at ${width}x${height}`)
+        if(width===360)assert.equal(layout.scrollable,true,'long questions need their own scrolling area')
+        await fits(`long ${subject} at ${width}x${height}`)
+        await evaluate(`document.querySelector('.iq-answers button').focus()`)
+        await call('Input.dispatchKeyEvent',{type:'keyDown',key:' ',code:'Space',windowsVirtualKeyCode:32})
+        await call('Input.dispatchKeyEvent',{type:'keyUp',key:' ',code:'Space',windowsVirtualKeyCode:32})
+        await waitFor(`document.querySelector('.iq-answers button').getAttribute('aria-pressed')==='true'`)
+        assert.equal(await evaluate(`document.querySelectorAll('.iq-answers button[aria-pressed=true]').length`),1)
+        assert.equal(await evaluate(`document.querySelector('.iq-answers button i').textContent`),'✓')
+        await evaluate(`document.querySelectorAll('.iq-answers button')[1].click()`)
+        await waitFor(`document.querySelectorAll('.iq-answers button')[1].getAttribute('aria-pressed')==='true'`)
+        assert.equal(await evaluate(`document.querySelector('.iq-answers button').getAttribute('aria-pressed')`),'false')
+        if(subject==='Ngữ văn'&&width===360){
+          const shot=await call('Page.captureScreenshot',{format:'png'})
+          await writeFile(path.join(tmpdir(),'xiangqi-iq-long-mobile.png'),Buffer.from(shot.data,'base64'))
         }
       }
     }

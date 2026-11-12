@@ -12,11 +12,14 @@ test('IQ bank contains 168 unique, complete questions across seven school subjec
     assert.equal(new Set(q.answers).size,4,q.question)
     assert.ok(Number.isInteger(q.correct)&&q.correct>=0&&q.correct<4)
     assert.ok(q.explanation.trim().length>0&&q.answers.every(answer=>answer.trim().length>0))
+    assert.ok([10,11,12].includes(q.grade),q.question)
+    assert.ok(q.topic.trim().length>0,q.question)
     groups.set(q.category,(groups.get(q.category)||0)+1)
   }
   assert.deepEqual(new Set(IQ_CATEGORIES),new Set(['Toán học','Vật lý','Hóa học','Ngữ văn','Lịch sử','Địa lý','Sinh học']))
   assert.equal(groups.size,7)
   assert.ok([...groups.values()].every(count=>count===24))
+  for(const category of IQ_CATEGORIES)assert.deepEqual(new Set(IQ_QUESTIONS.filter(q=>q.category===category).map(q=>q.grade)),new Set([10,11,12]))
 })
 test('a round mixes topics and shuffles options without changing the correct answer or bank',()=>{
   const before=structuredClone(IQ_QUESTIONS)
@@ -60,7 +63,7 @@ test('near exhaustion, fresh questions come first and a batch never repeats itse
 })
 test('history accepts only valid ids, keeps the most recent order, and fits a WebSocket command',()=>{
   assert.deepEqual(mergeIqHistory(null,{}),[])
-  assert.deepEqual(mergeIqHistory(['advanced-1','advanced-2','bad'],['advanced-1',null,{},'advanced-3']),['advanced-2','advanced-1','advanced-3'])
+  assert.deepEqual(mergeIqHistory(['vn2018-1','vn2018-2','bad'],['vn2018-1',null,{},'vn2018-3']),['vn2018-2','vn2018-1','vn2018-3'])
   const history=mergeIqHistory([],[...IQ_QUESTIONS.map(q=>q.id),...Array(2000).fill('unknown')])
   assert.equal(history.length,168)
   assert.ok(Buffer.byteLength(JSON.stringify({type:'iq_create',name:'Player',seenQuestions:history}))<16000)
@@ -73,29 +76,25 @@ const answer=(category,index)=>{
   return question.answers[question.correct]
 }
 
-test('advanced probability and counting answers match independent enumeration',()=>{
-  const permutations=values=>values.length?values.flatMap((v,i)=>permutations(values.filter((_,j)=>i!==j)).map(rest=>[v,...rest])):[[]]
-  const arrangements=permutations([0,1,2,3])
-  const derangements=arrangements.filter(order=>order.every((value,index)=>value!==index)).length
-  assert.equal(answer('Toán học',8),`${derangements/3}/${arrangements.length/3}`)
-  const evenTotals=[],doubles=[]
-  for(let a=1;a<=6;a++)for(let b=1;b<=6;b++)if((a+b)%2===0){evenTotals.push([a,b]);if(a===b)doubles.push([a,b])}
-  assert.equal(answer('Toán học',3),`${doubles.length/6}/${evenTotals.length/6}`)
-  const numbers=Array.from({length:9000},(_,i)=>i+1000).filter(n=>n%5===0&&[...String(n)].every(c=>Number(c)<=5)&&new Set(String(n)).size===4)
-  assert.equal(Number(answer('Toán học',7)),numbers.length)
-  const exactlyOne=Array.from({length:100},(_,i)=>i+1).filter(n=>(n%3===0)!==(n%5===0))
-  assert.equal(Number(answer('Toán học',22)),exactlyOne.length)
-  let oneFace=0
-  for(let x=0;x<4;x++)for(let y=0;y<4;y++)for(let z=0;z<4;z++)if([x,y,z].filter(v=>v===0||v===3).length===1)oneFace++
-  assert.equal(Number(answer('Toán học',21)),oneFace)
+test('curriculum math answers agree with independent calculations',()=>{
+  const numeric=(index)=>Number(answer('Toán học',index))
+  const negative=[]
+  for(const x of [0,1,2,2.5,3,4,5])if(x*x-5*x+6<0)negative.push(x)
+  assert.deepEqual(negative,[2.5])
+  assert.equal(answer('Toán học',2),'(2; 3)')
+  const heights=Array.from({length:401},(_,i)=>i/100).map(x=>-x*x+4*x)
+  assert.equal(answer('Toán học',3),`${Math.max(...heights)} m`)
   const groups=[]
-  for(let mask=0;mask<1024;mask++){
-    const selected=Array.from({length:10},(_,i)=>i).filter(i=>mask&(1<<i))
-    if(selected.length===5&&selected.filter(i=>i>=6).length===2)groups.push(selected)
-  }
-  assert.equal(Number(answer('Toán học',5)),groups.length)
-  const remainder=Array.from({length:105},(_,i)=>i+1).find(n=>n%3===2&&n%5===3&&n%7===2)
-  assert.equal(Number(answer('Toán học',16)),remainder)
+  for(let a=0;a<9;a++)for(let b=a+1;b<9;b++)for(let c=b+1;c<9;c++)if([a,b,c].filter(i=>i>=5).length===2)groups.push([a,b,c])
+  assert.equal(numeric(7),groups.length)
+  assert.equal(numeric(10),Array.from({length:20},(_,i)=>3+i*2).reduce((sum,n)=>sum+n,0))
+  assert.equal(answer('Toán học',11),(10*1.05**2).toFixed(3).replace('.',','))
+  assert.equal(numeric(18),Math.max(...Array.from({length:61},(_,i)=>{const x=i/10;return x*(6-x)})))
+  const slices=10000,area=Array.from({length:slices},(_,i)=>{const x=(i+0.5)/slices;return (x-x*x)/slices}).reduce((a,b)=>a+b,0)
+  assert.ok(Math.abs(area-1/6)<1e-8)
+  assert.equal(answer('Toán học',20),'1/6')
+  assert.equal(answer('Toán học',23),`${8/2}/${10/2}`)
+  assert.equal(answer('Toán học',24),`${((0.6*0.02+0.4*0.05)*100).toFixed(1).replace('.',',')}%`)
 })
 
 test('subject selection stays in the chosen bank before and after exhaustion',()=>{
@@ -117,8 +116,11 @@ test('subject selection stays in the chosen bank before and after exhaustion',()
 })
 
 test('science numerical answers agree with independent calculations',()=>{
-  assert.equal(answer('Vật lý',20),`Cách kính ${(1/(1/10-1/15)).toFixed(0)} cm phía bên kia`)
+  assert.equal(answer('Vật lý',20),`Tăng ${500-200} J`)
+  assert.equal(answer('Vật lý',17),`${(0.1*5*0.2).toFixed(1).replace('.',',')} N`)
+  assert.equal(answer('Vật lý',19),`${((0.06-0.02)/0.2).toFixed(1).replace('.',',')} V`)
   assert.equal(answer('Vật lý',24),`1/${2**3}`)
+  assert.equal(answer('Hóa học',11),`${(0.1*30/20).toFixed(2).replace('.',',')} M`)
   assert.equal(answer('Hóa học',10),`${(0.2/2*64).toFixed(1).replace('.',',')} g`)
   const pH=14+Math.log10((0.1*0.2-0.1*0.1)/(0.1+0.1))
   assert.equal(answer('Hóa học',5),pH.toFixed(2).replace('.',','))
@@ -128,6 +130,7 @@ test('science numerical answers agree with independent calculations',()=>{
 
 test('replaced content is fresh even for players who exhausted the old bank',()=>{
   const previous=[...Array.from({length:120},(_,i)=>`iq-${i+1}`),...Array.from({length:4},(_,c)=>Array.from({length:24},(_,i)=>`knowledge-${c+1}-${i+1}`)).flat()]
+  previous.push(...Array.from({length:144},(_,i)=>`advanced-${i+1}`),...Array.from({length:3},(_,c)=>Array.from({length:24},(_,i)=>`school-${c+1}-${i+1}`)).flat())
   assert.deepEqual(mergeIqHistory([],previous),[])
   assert.equal(selectIqQuestions(15,previous).length,15)
 })

@@ -364,4 +364,7 @@ test('IQ fixes the selected school subject for everyone and keeps it on replay',
   await startIq([host,guest])
   assert.equal(host.state.subject,'Vật lý')
   assert.equal(guest.state.question.category,'Vật lý')
+  const question=IQ_QUESTIONS.find(q=>q.id===guest.state.question.key)
+  assert.equal(guest.state.question.grade,question.grade)
+  assert.equal(guest.state.question.topic,question.topic)
 })

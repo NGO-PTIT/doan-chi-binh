@@ -533,7 +533,7 @@ function endIqRoom(socket) {
 }
 function broadcastIq(room) {
   const question=room.questions[room.index],revealed=['reveal','finished'].includes(room.phase)
-  const publicQuestion=question?{id:room.questionId,key:question.id,category:question.category,question:question.question,answers:question.answers,...(revealed?{correct:question.correct,explanation:question.explanation}:{})}:null
+  const publicQuestion=question?{id:room.questionId,key:question.id,category:question.category,grade:question.grade,topic:question.topic,question:question.question,answers:question.answers,...(revealed?{correct:question.correct,explanation:question.explanation}:{})}:null
   const players=room.players.map(p=>({id:p.id,name:p.name,host:p.host,connected:p.connected,score:p.score,correct:p.correct,hasAnswered:p.answer!==null,...(revealed?{answer:p.answer,points:p.points}:{})}))
   for(const p of room.players)if(p.connected)send(p.socket,{type:'iq_state',code:room.code,phase:room.phase,index:room.index,questionCount:room.questionCount,field:'school',subject:room.subject,deadline:room.deadline,serverTime:Date.now(),question:publicQuestion,players,you:{id:p.id,name:p.name,host:p.host,reconnectToken:p.reconnectToken,answer:p.answer}})
 }

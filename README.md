@@ -49,20 +49,19 @@ Ba độ khó Caro dùng cùng bộ kiểm tra thắng/chặn thua tức thì, v
 
 Kiểm tra bố cục trình duyệt trong `npm test` dùng Chrome headless ở các chiều rộng 360, 768, 1024 và 1280 px. Cài Chrome hoặc đặt `CHROME_BIN` tới trình duyệt Chromium; nếu không có, riêng bài kiểm tra này sẽ được bỏ qua. Ảnh Caro sau khi đặt quân được lưu ở thư mục tạm dưới tên `xiangqi-caro-<chiều rộng>.png`.
 
-## Đấu Trí IQ online
+## Đấu kiến thức online
 
-Mở **Đấu Trí IQ**, nhập tên, chọn 5/10/15 câu rồi bấm **Tạo phòng mới**. Gửi mã sáu ký tự cho bạn bè; mỗi người mở IQ trên thiết bị riêng, nhập tên và mã để **Tham gia**. Phòng hỗ trợ 2–6 người, chủ phòng bấm **Bắt đầu so tài** khi đủ người.
+Mở **Đấu kiến thức**, nhập tên, chọn 5/10/15 câu rồi bấm **Tạo phòng**. Gửi mã sáu ký tự cho bạn bè; mỗi người mở Đấu kiến thức trên thiết bị riêng, nhập tên và mã để **Tham gia**. Phòng hỗ trợ 2–6 người, chủ phòng bấm **Bắt đầu chơi** khi đủ người.
 
 Cả phòng trả lời cùng một câu trong 20 giây. Mỗi đáp án chỉ được khóa một lần. Khi mọi người đã trả lời hoặc hết giờ, máy chủ công bố đáp án và điểm: 100 điểm nếu đúng, cộng 5 điểm cho mỗi giây còn lại, tối đa 200 điểm. Chủ phòng chuyển câu và có thể mở ván mới sau bảng xếp hạng.
 
 Mất kết nối có thể kết nối lại từ cùng tab, giữ chỗ và điểm bằng mã riêng lưu trong phiên trình duyệt. Đồng hồ vẫn chạy; người mất mạng không chặn cả phòng. Chủ phòng rời đi sẽ chuyển quyền cho người còn kết nối. Phòng đóng khi tất cả rời đi hoặc chủ phòng kết thúc phòng. Máy chủ khởi động lại sẽ mất các phòng đang chơi.
 
-Chọn **Chơi cùng máy** ở đầu trang IQ để dùng chế độ chuyền thiết bị như trước. Chế độ online cần chạy `npm run dev` khi phát triển, hoặc `npm run build` rồi `npm start` khi chạy bản build; `npm run dev:web` riêng chỉ phục vụ giao diện.
+Chọn **Chơi chung thiết bị** ở đầu trang Đấu kiến thức để dùng chế độ chuyền thiết bị như trước. Chế độ online cần chạy `npm run dev` khi phát triển, hoặc `npm run build` rồi `npm start` khi chạy bản build; `npm run dev:web` riêng chỉ phục vụ giao diện.
 
 
-IQ có 168 câu nâng cao thuộc lĩnh vực **Môn học**, mỗi môn 24 câu: Toán học, Vật lý, Hóa học, Ngữ văn, Lịch sử, Địa lý và Sinh học. Trước khi bắt đầu, chọn **Lĩnh vực → Môn học → môn cụ thể**, hoặc **Tất cả môn học** để chơi tổng hợp. Online: chủ phòng chọn khi tạo phòng; mọi thành viên và các ván chơi lại dùng cùng môn đã chọn. Muốn đổi môn online, tạo phòng mới. Chơi cùng máy: chọn môn tại màn hình thiết lập. Câu hỏi luôn được lọc đúng môn, ưu tiên câu chưa gặp và đảo đáp án. Chơi tổng hợp cân bằng các môn còn câu khả dụng; chơi riêng từng môn không lấy câu của môn khác khi đã hết câu mới. Logic và Văn hóa không còn là nhóm câu riêng trong bộ môn học.
+Đấu kiến thức có 168 câu thuộc phạm vi THPT lớp 10–12, định hướng Chương trình GDPT 2018 của Việt Nam, thuộc lĩnh vực **Môn học**, mỗi môn 24 câu: Toán học, Vật lý, Hóa học, Ngữ văn, Lịch sử, Địa lý và Sinh học. Trước khi bắt đầu, chọn **Lĩnh vực → Môn học → môn cụ thể**, hoặc **Tất cả môn học** để chơi tổng hợp. Online: chủ phòng chọn khi tạo phòng; mọi thành viên và các ván chơi lại dùng cùng môn đã chọn. Muốn đổi môn online, tạo phòng mới. Chơi chung thiết bị: chọn môn tại màn hình thiết lập. Câu hỏi luôn được lọc đúng môn, ưu tiên câu chưa gặp và đảo đáp án. Chơi tổng hợp cân bằng các môn còn câu khả dụng; chơi riêng từng môn không lấy câu của môn khác khi đã hết câu mới. Mỗi câu có lớp, chuyên đề và giải thích đáp án; nhãn lớp/chuyên đề hiển thị ở cả hai chế độ chơi. Nội dung kết hợp thông hiểu và vận dụng, không dùng câu đố mẹo ngoài môn học. Xem [phạm vi và nguồn đối chiếu](docs/iq-curriculum.md).
 
 Phòng ghi nhớ các câu đã chọn qua các ván; trình duyệt lưu các câu đã gặp để tránh lặp khi tạo hoặc vào phòng khác và khi chơi cùng máy. Khi đã dùng hết bộ câu, hệ thống cân bằng chủ đề và dùng lại câu gặp lâu nhất trong từng chủ đề. Xóa dữ liệu trình duyệt sẽ đặt lại lịch sử cá nhân; nếu trình duyệt chặn lưu trữ, lịch sử trong phòng vẫn hoạt động.
 
-
-Nguồn tham khảo phần nâng cao: [NOAA – El Niño và La Niña](https://oceanservice.noaa.gov/facts/ninonina.html), [Open University – thuật ngữ trần thuật](https://www.open.edu/openlearn/history-the-arts/literature/approaching-prose-fiction/content-section--glossary). Độ khó chưa được hiệu chuẩn bằng kết quả chơi thực tế.
+Giao diện Đấu kiến thức ưu tiên tạo/vào phòng trên điện thoại. Khi trả lời, câu hỏi và lựa chọn cuộn riêng, đồng hồ và nút **Chốt đáp án** luôn nằm ngoài phần cuộn. Đáp án đang chọn có dấu tích và trạng thái cho trình đọc màn hình. Kiểm thử trình duyệt bao gồm câu dài nhất mỗi môn ở màn hình 360×640 và 640×360, cùng thao tác chọn đáp án bằng bàn phím.
