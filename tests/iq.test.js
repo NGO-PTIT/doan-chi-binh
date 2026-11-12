@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {IQ_QUESTIONS,selectIqQuestions,mergeIqHistory} from '../src/iq.js'
+import {IQ_QUESTIONS,IQ_CATEGORIES,selectIqQuestions,mergeIqHistory} from '../src/iq.js'
 
-test('IQ bank contains 120 unique, complete questions across ten balanced topics',()=>{
-  assert.equal(IQ_QUESTIONS.length,120)
-  assert.equal(new Set(IQ_QUESTIONS.map(q=>q.id)).size,120)
-  assert.equal(new Set(IQ_QUESTIONS.map(q=>q.question)).size,120)
+test('IQ bank contains 144 unique, complete questions across six balanced disciplines',()=>{
+  assert.equal(IQ_QUESTIONS.length,144)
+  assert.equal(new Set(IQ_QUESTIONS.map(q=>q.id)).size,144)
+  assert.equal(new Set(IQ_QUESTIONS.map(q=>q.question)).size,144)
   const groups=new Map()
   for(const q of IQ_QUESTIONS){
     assert.equal(q.answers.length,4,q.question)
@@ -14,15 +14,16 @@ test('IQ bank contains 120 unique, complete questions across ten balanced topics
     assert.ok(q.explanation.trim().length>0&&q.answers.every(answer=>answer.trim().length>0))
     groups.set(q.category,(groups.get(q.category)||0)+1)
   }
-  assert.equal(groups.size,10)
-  assert.ok([...groups.values()].every(count=>count===12))
+  assert.deepEqual(new Set(IQ_CATEGORIES),new Set(['Toán học','Logic','Địa lý','Lịch sử','Văn học','Văn hóa']))
+  assert.equal(groups.size,6)
+  assert.ok([...groups.values()].every(count=>count===24))
 })
 test('a round mixes topics and shuffles options without changing the correct answer or bank',()=>{
   const before=structuredClone(IQ_QUESTIONS)
   for(const count of [5,10,15]){
     const questions=selectIqQuestions(count,[],()=>0),groups=new Map()
     assert.equal(new Set(questions.map(q=>q.id)).size,count)
-    assert.equal(new Set(questions.map(q=>q.category)).size,Math.min(count,10))
+    assert.equal(new Set(questions.map(q=>q.category)).size,Math.min(count,6))
     for(const q of questions){
       const original=IQ_QUESTIONS.find(item=>item.id===q.id)
       assert.equal(q.answers[q.correct],original.answers[original.correct])
@@ -33,17 +34,21 @@ test('a round mixes topics and shuffles options without changing the correct ans
   }
   assert.deepEqual(IQ_QUESTIONS,before)
 })
-test('eight 15-question rounds exhaust the bank before any question repeats',()=>{
+test('rounds exhaust the bank before repeats and keep repeated topics balanced',()=>{
   let history=[]
-  for(let round=0;round<8;round++){
-    const questions=selectIqQuestions(15,history)
+  while(history.length<IQ_QUESTIONS.length){
+    const questions=selectIqQuestions(Math.min(15,IQ_QUESTIONS.length-history.length),history)
     assert.ok(questions.every(question=>!history.includes(question.id)))
     history=mergeIqHistory(history,questions.map(q=>q.id))
   }
-  assert.equal(history.length,120)
+  assert.equal(history.length,144)
   const next=selectIqQuestions(15,history)
-  assert.deepEqual(next.map(q=>q.id),history.slice(0,15))
-  assert.ok(next.every(question=>!history.slice(-15).includes(question.id)))
+  const counts=IQ_CATEGORIES.map(category=>next.filter(q=>q.category===category).length)
+  assert.ok(Math.max(...counts)-Math.min(...counts)<=1)
+  for(const category of IQ_CATEGORIES){
+    const ids=history.filter(id=>IQ_QUESTIONS.find(q=>q.id===id).category===category)
+    assert.deepEqual(next.filter(q=>q.category===category).map(q=>q.id),ids.slice(0,next.filter(q=>q.category===category).length))
+  }
   history=mergeIqHistory(history,next.map(q=>q.id))
   assert.ok(selectIqQuestions(15,history).every(q=>!next.some(last=>last.id===q.id)))
 })
@@ -56,11 +61,11 @@ test('near exhaustion, fresh questions come first and a batch never repeats itse
 test('history accepts only valid ids, keeps the most recent order, and fits a WebSocket command',()=>{
   assert.deepEqual(mergeIqHistory(null,{}),[])
   assert.deepEqual(mergeIqHistory(['iq-1','iq-2','bad'],['iq-1',null,{},'iq-3']),['iq-2','iq-1','iq-3'])
-  const history=mergeIqHistory([],Array.from({length:2000},(_,i)=>`iq-${i}`))
-  assert.equal(history.length,120)
+  const history=mergeIqHistory([],[...IQ_QUESTIONS.map(q=>q.id),...Array(2000).fill('unknown')])
+  assert.equal(history.length,144)
   assert.ok(Buffer.byteLength(JSON.stringify({type:'iq_create',name:'Player',seenQuestions:history}))<16000)
   assert.equal(selectIqQuestions(5,['unknown',null,{}]).length,5)
-  assert.throws(()=>selectIqQuestions(121),RangeError)
+  assert.throws(()=>selectIqQuestions(IQ_QUESTIONS.length+1),RangeError)
 })
 
 test('revised deduction puzzles have exactly one valid solution',()=>{

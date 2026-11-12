@@ -60,6 +60,8 @@ Mất kết nối có thể kết nối lại từ cùng tab, giữ chỗ và đ
 Chọn **Chơi cùng máy** ở đầu trang IQ để dùng chế độ chuyền thiết bị như trước. Chế độ online cần chạy `npm run dev` khi phát triển, hoặc `npm run build` rồi `npm start` khi chạy bản build; `npm run dev:web` riêng chỉ phục vụ giao diện.
 
 
-IQ có 120 câu thuộc 10 nhóm: suy luận số, logic, toán ứng dụng, quan sát, mật mã, không gian, xác suất, ngôn ngữ, thời gian và tư duy nhanh. Mỗi ván ưu tiên câu chưa gặp và trộn chủ đề, đồng thời đảo thứ tự đáp án.
+IQ có 144 câu thuộc 6 lĩnh vực, mỗi lĩnh vực 24 câu: Toán học, Logic, Địa lý, Lịch sử, Văn học và Văn hóa. Câu hỏi có bốn lựa chọn và giải thích đáp án; kiến thức Việt Nam kết hợp với kiến thức thế giới. Mỗi ván cân bằng các chủ đề còn câu khả dụng (chênh tối đa một câu khi đủ nguồn), ưu tiên câu chưa gặp và đảo thứ tự đáp án. Khi phải dùng lại câu, hệ thống ưu tiên chủ đề ít xuất hiện trong ván và lấy câu cũ nhất trong chủ đề đó.
 
-Phòng ghi nhớ các câu đã chọn qua các ván; trình duyệt lưu các câu đã gặp để tránh lặp khi tạo hoặc vào phòng khác và khi chơi cùng máy. Khi đã dùng hết bộ câu, hệ thống dùng lại các câu gặp lâu nhất trước. Xóa dữ liệu trình duyệt sẽ đặt lại lịch sử cá nhân; nếu trình duyệt chặn lưu trữ, lịch sử trong phòng vẫn hoạt động.
+Phòng ghi nhớ các câu đã chọn qua các ván; trình duyệt lưu các câu đã gặp để tránh lặp khi tạo hoặc vào phòng khác và khi chơi cùng máy. Khi đã dùng hết bộ câu, hệ thống cân bằng chủ đề và dùng lại câu gặp lâu nhất trong từng chủ đề. Xóa dữ liệu trình duyệt sẽ đặt lại lịch sử cá nhân; nếu trình duyệt chặn lưu trữ, lịch sử trong phòng vẫn hoạt động.
+
+Nguồn đối chiếu cho một số câu văn hóa và văn học: [UNESCO – Ca trù](https://ich.unesco.org/en/USL/ca-tr-singing-00309), [UNESCO – Không gian văn hóa cồng chiêng](https://ich.unesco.org/en/RL/space-of-gong-culture-00120), [Thư viện Quốc hội Hoa Kỳ – bản Truyện Kiều](https://www.loc.gov/resource/gdcwdl.wdl_14382/). Đây là nguồn tham khảo cho các mục tương ứng, không phải chứng nhận thẩm định toàn bộ ngân hàng câu hỏi.
